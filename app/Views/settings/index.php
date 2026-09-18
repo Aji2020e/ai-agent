@@ -1,0 +1,232 @@
+<?= $this->extend('layouts/main') ?>
+
+<?= $this->section('content') ?>
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card ai-card">
+            <div class="card-body p-4">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="d-inline-flex align-items-center justify-content-center rounded-3 text-white" style="width:44px;height:44px;background:linear-gradient(135deg,#6366f1,#d946ef);"><i class="bi bi-sliders"></i></span>
+                    <div>
+                        <h5 class="fw-bold mb-0">Provider AI</h5>
+                        <small class="text-secondary">Berlaku untuk semua user · tersimpan di database</small>
+                    </div>
+                </div>
+
+                <?php if (session()->getFlashdata('errors')): ?>
+                <div class="alert alert-danger mt-3">
+                    <ul class="mb-0">
+                    <?php foreach (session()->getFlashdata('errors') as $error): ?>
+                        <li><?= $error ?></li>
+                    <?php endforeach; ?>
+                    </ul>
+                </div>
+                <?php endif; ?>
+
+                <?php if ($from_env): ?>
+                <div class="alert alert-info mt-3 mb-0"><i class="bi bi-info-circle me-2"></i>Sedang memakai nilai dari <code>.env</code>. Simpan form ini untuk menimpa via database.</div>
+                <?php endif; ?>
+
+                <form action="<?= site_url('admin/settings/update') ?>" method="post" class="mt-3">
+                    <?= csrf_field() ?>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Provider</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="ai_provider" id="provOllama" value="ollama" <?= $ai_provider === 'ollama' ? 'checked' : '' ?>>
+                            <label class="btn btn-outline-primary" for="provOllama"><i class="bi bi-hdd-network me-1"></i>Ollama</label>
+                            <input type="radio" class="btn-check" name="ai_provider" id="provOpenai" value="openai" <?= $ai_provider === 'openai' ? 'checked' : '' ?>>
+                            <label class="btn btn-outline-primary" for="provOpenai"><i class="bi bi-key me-1"></i>API Key</label>
+                            <input type="radio" class="btn-check" name="ai_provider" id="provOpencode" value="opencode" <?= $ai_provider === 'opencode' ? 'checked' : '' ?>>
+                            <label class="btn btn-outline-primary" for="provOpencode"><i class="bi bi-terminal me-1"></i>OpenCode</label>
+                        </div>
+                    </div>
+
+                    <!-- Ollama -->
+                    <div data-prov="ollama">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ollama URL</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
+                                <input type="url" name="ollama_url" id="ollamaUrl" class="form-control" value="<?= esc($ollama_url) ?>">
+                            </div>
+                            <div class="form-text">Alamat server Ollama <b>dari sisi aplikasi</b> (bukan browser).</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(Tes Koneksi untuk daftar)</small></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-cpu"></i></span>
+                                <input type="text" name="ollama_model" id="ollamaModel" list="modelListOllama" class="form-control" value="<?= esc($ollama_model) ?>">
+                                <datalist id="modelListOllama"></datalist>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- OpenAI-compatible -->
+                    <div data-prov="openai" class="d-none">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Base URL</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-link-45deg"></i></span>
+                                <input type="url" name="openai_base" id="openaiBase" class="form-control" value="<?= esc($openai_base) ?>" placeholder="https://api.openai.com">
+                            </div>
+                            <div class="form-text">Contoh: OpenAI <code>https://api.openai.com</code> · Groq <code>https://api.groq.com/openai</code> · DeepSeek <code>https://api.deepseek.com</code> · OpenRouter <code>https://openrouter.ai/api</code></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">API Key <?= $has_openai_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                <input type="password" name="openai_key" class="form-control" placeholder="<?= $has_openai_key ? 'Kosongkan untuk memakai key lama' : 'sk-...' ?>" autocomplete="new-password">
+                            </div>
+                            <div class="form-text">Disimpan terenkripsi di database.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(Tes Koneksi untuk daftar)</small></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-cpu"></i></span>
+                                <input type="text" name="openai_model" id="openaiModel" list="modelListOpenai" class="form-control" value="<?= esc($openai_model) ?>">
+                                <datalist id="modelListOpenai"></datalist>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- OpenCode -->
+                    <div data-prov="opencode" class="d-none">
+                        <div class="alert alert-secondary small"><i class="bi bi-info-circle me-2"></i>Jalankan dulu di mesin AI: <code>opencode serve --port 4096</code> (tambah <code>--hostname 0.0.0.0</code> bila beda mesin). Butuh login provider di opencode-nya. Sesi chat dipetakan otomatis ke sesi opencode.</div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Server URL</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-terminal"></i></span>
+                                <input type="url" name="opencode_url" id="opencodeUrl" class="form-control" value="<?= esc($opencode_url) ?>">
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Username <small class="text-secondary fw-normal">(bila pakai password server)</small></label>
+                                <input type="text" name="opencode_user" id="opencodeUser" class="form-control" value="<?= esc($opencode_user) ?>" placeholder="opencode" autocomplete="username">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Password <?= $has_oc_pass ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
+                                <input type="password" name="opencode_pass" id="opencodePass" class="form-control" placeholder="<?= $has_oc_pass ? 'Kosongkan untuk memakai lama' : 'OPENCODE_SERVER_PASSWORD' ?>" autocomplete="new-password">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(format: provider/model — Tes Koneksi untuk daftar, kosongkan = default opencode)</small></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-cpu"></i></span>
+                                <input type="text" name="opencode_model" id="opencodeModel" list="modelListOpencode" class="form-control" value="<?= esc($opencode_model) ?>" placeholder="anthropic/claude-sonnet-4-5">
+                                <datalist id="modelListOpencode"></datalist>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <h6 class="fw-bold"><i class="bi bi-globe me-2"></i>Pencarian Internet Cadangan</h6>
+                    <p class="text-secondary small">Dipakai otomatis bila topik kekinian atau data lokal kosong. Model lokal tidak belajar sendiri — ini cara ia "tahu" hal baru.</p>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Sumber pencarian</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="search_provider" id="spOff" value="off" <?= $search_provider === 'off' ? 'checked' : '' ?>>
+                            <label class="btn btn-outline-secondary" for="spOff">Mati</label>
+                            <input type="radio" class="btn-check" name="search_provider" id="spTavily" value="tavily" <?= $search_provider === 'tavily' ? 'checked' : '' ?>>
+                            <label class="btn btn-outline-secondary" for="spTavily">Tavily</label>
+                            <input type="radio" class="btn-check" name="search_provider" id="spDdg" value="ddg" <?= $search_provider === 'ddg' ? 'checked' : '' ?>>
+                            <label class="btn btn-outline-secondary" for="spDdg">DuckDuckGo</label>
+                        </div>
+                        <div class="form-text">Tavily butuh API key (gratis di tavily.com). DuckDuckGo gratis tanpa key, hasil terbatas.</div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label class="form-label fw-semibold">Tavily API Key <?= $has_search_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
+                            <input type="password" name="search_key" class="form-control" placeholder="<?= $has_search_key ? 'Kosongkan untuk memakai lama' : 'tvly-...' ?>" autocomplete="new-password">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold">Maks hasil</label>
+                            <input type="number" name="search_max" class="form-control" value="<?= esc($search_max) ?>" min="1" max="8">
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-ai"><i class="bi bi-save me-2"></i>Simpan</button>
+                        <button type="button" class="btn btn-outline-secondary" id="btnTest"><i class="bi bi-lightning-charge me-2"></i>Tes Koneksi</button>
+                    </div>
+                </form>
+
+                <div id="testResult" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card ai-card">
+            <div class="card-body p-4">
+                <h6 class="fw-bold"><i class="bi bi-question-circle me-2"></i>Error 404 saat chat (Ollama)?</h6>
+                <p class="text-secondary small mb-2">Hampir selalu berarti <b>model belum di-pull</b>. Cek lewat Tes Koneksi — kalau model tidak ada:</p>
+                <pre class="bg-dark text-light rounded-3 p-3 small mb-0">ollama pull <?= esc($ollama_model) ?></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<?= $this->endSection() ?>
+
+<?= $this->section('scripts') ?>
+<script>
+const curProv = () => document.querySelector('input[name="ai_provider"]:checked').value;
+function syncProv() {
+    document.querySelectorAll('[data-prov]').forEach(el => {
+        el.classList.toggle('d-none', el.dataset.prov !== curProv());
+    });
+}
+document.querySelectorAll('input[name="ai_provider"]').forEach(r => r.addEventListener('change', syncProv));
+syncProv();
+
+const modelInput = { ollama: 'ollamaModel', openai: 'openaiModel', opencode: 'opencodeModel' };
+const modelLists = { ollama: 'modelListOllama', openai: 'modelListOpenai', opencode: 'modelListOpencode' };
+
+document.getElementById('btnTest').addEventListener('click', async function () {
+    const btn = this;
+    const box = document.getElementById('testResult');
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    const name = document.querySelector('meta[name="csrf-name"]')?.content || 'csrf_test_name';
+    const prov = curProv();
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Mengecek...';
+    box.innerHTML = '';
+
+    const fd = new FormData();
+    fd.append('ai_provider', prov);
+    fd.append('ollama_url', document.getElementById('ollamaUrl').value);
+    fd.append('openai_base', document.getElementById('openaiBase').value);
+    const ok = document.querySelector('input[name="openai_key"]');
+    if (ok && ok.value) fd.append('openai_key', ok.value);
+    fd.append('opencode_url', document.getElementById('opencodeUrl').value);
+    fd.append('opencode_user', document.getElementById('opencodeUser').value);
+    const op = document.getElementById('opencodePass');
+    if (op && op.value) fd.append('opencode_pass', op.value);
+    fd.append(name, meta?.content || '');
+
+    try {
+        const res = await fetch('<?= site_url('admin/settings/test') ?>', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.csrf) meta?.setAttribute('content', data.csrf);
+        if (data.success) {
+            document.getElementById(modelLists[prov]).innerHTML = (data.models || []).map(m => `<option value="${m}">`).join('');
+            const list = (data.models || []).map(m => `<li><code>${m}</code></li>`).join('') || '<li class="text-secondary">Tidak ada model.</li>';
+            const cur = document.getElementById(modelInput[prov]).value.trim();
+            const warn = cur && !(data.models || []).includes(cur)
+                ? `<div class="alert alert-warning mt-2 mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Model <code>${cur}</code> tidak ada di server ini.</div>` : '';
+            box.innerHTML = `<div class="alert alert-success mb-0"><i class="bi bi-check-circle me-2"></i>Terhubung (${(data.models || []).length} model):<ul class="mb-0 mt-2">${list}</ul></div>${warn}`;
+        } else {
+            box.innerHTML = `<div class="alert alert-danger mb-0"><i class="bi bi-x-circle me-2"></i>Tidak terhubung: ${data.error || 'unknown'}</div>`;
+        }
+    } catch (e) {
+        box.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-x-circle me-2"></i>Gagal menghubungi aplikasi.</div>';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Tes Koneksi';
+});
+</script>
+<?= $this->endSection() ?>

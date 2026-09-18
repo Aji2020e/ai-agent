@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: ai-agent-app
+    ports:
+      - "8080:80"
+    environment:
+      - CI_ENVIRONMENT=development
+      - database.default.hostname=db
+      - database.default.database=ai_agent
+      - database.default.username=ai_agent
+      - database.default.password=ai_agent_pass
+      - database.default.DBDriver=MySQLi
+      - database.default.port=3306
+      - app.ollamaUrl=http://ollama:11434
+      - app.ollamaModel=qwen2.5-coder:32b
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./writable:/var/www/html/writable
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    container_name: ai-agent-db
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: ai_agent
+      MYSQL_USER: ai_agent
+      MYSQL_PASSWORD: ai_agent_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai-agent-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          memory: 24G
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  ollama_data:

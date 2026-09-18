@@ -1,0 +1,68 @@
+# AI Coding Assistant - Architecture & Requirements
+## Backend: CodeIgniter 4 + Modern Admin Template
+
+---
+
+##  Project Overview
+Aplikasi web AI Coding Assistant menggunakan:
+- **Backend**: CodeIgniter 4 (PHP 8.1+)
+- **Frontend**: AdminLTE 3 / CoreUI (Modern Admin Dashboard Template)
+- **AI Engine**: Ollama (qwen2.5-coder:32b)
+- **Database**: MySQL/MariaDB
+- **Deployment**: Coolify dengan Docker
+
+---
+
+## ️ System Architecture
+
+```plantuml
+@startuml AI Coding Assistant Architecture
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FEFEFE
+
+package "Client Side" {
+  [Web Browser] as browser
+  [HTTPS/SSL] as ssl
+}
+
+package "Coolify Managed" {
+  component "CodeIgniter 4 App\n(Port 80)" as webapp {
+    [AdminLTE Dashboard] as dashboard
+    [Auth Controller] as auth
+    [Chat Controller] as chat
+    [API Helper] as helper
+  }
+  
+  component "Ollama Backend\n(Port 11434)" as ollama {
+    [qwen2.5-coder:32b\n(19GB Model)] as model
+  }
+  
+  database "MySQL Database" as db
+}
+
+browser --> ssl : HTTPS
+ssl --> webapp
+webapp --> auth : Login/Logout
+webapp --> chat : Chat Requests
+chat --> ollama : HTTP POST\n/api/chat
+webapp --> db : MySQL Queries
+
+untuk pengembangan ai diharapkan bisa membaca folder proyek proyek lain (saat ini jangan dulu untuk keamanan)
+
+note right of ollama
+  Internal URL:
+  http://ollama-backend:11434
+  Model: qwen2.5-coder:32b
+  RAM: ~20-25GB
+end note
+
+note right of db
+  Tables:
+  - users
+  - chat_history
+  - projects
+  - settings
+end note
+
+@enduml
