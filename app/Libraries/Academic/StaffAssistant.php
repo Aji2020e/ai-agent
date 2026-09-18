@@ -36,7 +36,7 @@ class StaffAssistant extends AssistantModule
         $nik      = static::requireParam($params, 'nik', 30);
         $question = static::requireQuestion($params);
 
-        $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], [$map['id_col'] => $nik], 1, $map['id_col'] . ' ASC', [$map['id_col']]);
+        $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], [$map['id_col'] => $nik], 1, $map['id_col'] . ' ASC', [$map['id_col']], static::slug());
 
         if ($rows === []) {
             throw new RuntimeException("Data staff '{$nik}' tidak ditemukan.");

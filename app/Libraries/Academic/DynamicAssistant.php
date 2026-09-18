@@ -148,7 +148,7 @@ class DynamicAssistant extends AssistantModule
 
         return [
             'tabel' => $table,
-            'baris' => AcademicDb::select($table, $cols, $where, max(1, min($limit, 50)), $order),
+            'baris' => AcademicDb::select($table, $cols, $where, max(1, min($limit, 50)), $order, [], static::slug()),
         ];
     }
 
@@ -181,7 +181,7 @@ class DynamicAssistant extends AssistantModule
         if (! $viaV2) {
             $prows = AcademicDb::select(
                 $p['table'], $p['cols'] ?? [], [$p['id_col'] => $id],
-                1, ($p['cols'][0] ?? $p['id_col']) . ' ASC', [$p['id_col']]
+                1, ($p['cols'][0] ?? $p['id_col']) . ' ASC', [$p['id_col']], static::slug()
             );
 
             if ($prows === []) {
@@ -214,7 +214,8 @@ class DynamicAssistant extends AssistantModule
                 }
                 $data[$rel['key'] ?? $rel['table']] = AcademicDb::select(
                     $rel['table'], $rel['cols'] ?? [], [$rel['id_col'] => $id],
-                    (int) ($rel['limit'] ?? 50), ($rel['order'] ?? ($rel['cols'][0] ?? $rel['id_col']) . ' ASC'), [$rel['id_col']]
+                    (int) ($rel['limit'] ?? 50), ($rel['order'] ?? ($rel['cols'][0] ?? $rel['id_col']) . ' ASC'), [$rel['id_col']],
+                    static::slug()
                 );
             }
         }

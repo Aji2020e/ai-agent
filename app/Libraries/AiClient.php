@@ -27,7 +27,10 @@ class AiClient
             return ['openai',
                 rtrim($s->getGlobal('openai_base', 'https://api.openai.com') ?: 'https://api.openai.com', '/'),
                 $s->getGlobal('openai_model', 'gpt-4o-mini') ?: 'gpt-4o-mini',
-                ['apiKey' => (string) $s->getSecret('openai_key', ''), 'timeout' => 300],
+                [
+                    'apiKey'  => (string) $s->getSecret('openai_key', ''),
+                    'timeout' => 300,
+                ] + self::sampling($s),
             ];
         }
 
@@ -39,15 +42,56 @@ class AiClient
                     'username' => (string) $s->getGlobal('opencode_user', ''),
                     'password' => (string) $s->getSecret('opencode_pass', ''),
                     'timeout'  => 600,
-                ],
+                ] + self::sampling($s),
             ];
         }
 
         return ['ollama',
             rtrim($s->getGlobal('ollama_url', env('app.ollamaUrl', 'http://localhost:11434')) ?: 'http://localhost:11434', '/'),
             $s->getGlobal('ollama_model', env('app.ollamaModel', 'qwen2.5-coder:32b')) ?: 'qwen2.5-coder:32b',
-            ['timeout' => 300],
+            ['timeout' => 300] + self::sampling($s),
         ];
+    }
+
+    /**
+     * PERBAIKAN B3 — parameter sampling terpusat dari settings.
+     *
+     * Sebelumnya jalur OpenAI tidak mengirim `temperature` sama sekali, sehingga
+     * provider memakai default 1.0: sangat kreatif, dan untuk pertanyaan data
+     * akademik itu berarti mengarang.
+     *
+     * Default sengaja rendah (0.2) karena mayoritas beban kerja sistem ini
+     * adalah melaporkan data, bukan berkreasi.
+     *
+     * @return array<string, float|int|string>
+     */
+    public static function sampling(\App\Models\SettingModel $s): array
+    {
+        return [
+            'temperature' => self::clampFloat($s->getGlobal('ai_temperature', '0.2'), 0.0, 2.0, 0.2),
+            'top_p'       => self::clampFloat($s->getGlobal('ai_top_p', '0.9'), 0.1, 1.0, 0.9),
+            'max_tokens'  => self::clampInt($s->getGlobal('ai_max_tokens', '1024'), 64, 8192, 1024),
+            'num_ctx'     => self::clampInt($s->getGlobal('ai_num_ctx', '8192'), 2048, 131072, 8192),
+            'keep_alive'  => (string) ($s->getGlobal('ai_keep_alive', '30m') ?: '30m'),
+        ];
+    }
+
+    private static function clampFloat(?string $v, float $min, float $max, float $def): float
+    {
+        if ($v === null || trim($v) === '' || ! is_numeric($v)) {
+            return $def;
+        }
+
+        return max($min, min($max, (float) $v));
+    }
+
+    private static function clampInt(?string $v, int $min, int $max, int $def): int
+    {
+        if ($v === null || trim($v) === '' || ! is_numeric($v)) {
+            return $def;
+        }
+
+        return max($min, min($max, (int) $v));
     }
 
     /**
@@ -64,12 +108,23 @@ class AiClient
         return $m;
     }
 
-    /** Konteks waktu berjalan — ditempel ke system prompt agar model tahu "sekarang". */
+    /**
+     * Konteks waktu berjalan — ditempel ke system prompt agar model tahu "sekarang".
+     *
+     * Tidak lagi memanggil date_default_timezone_set(): itu side-effect global
+     * yang mengubah perilaku seluruh aplikasi setiap kali prompt dibangun.
+     */
     public static function timeContext(): string
     {
-        date_default_timezone_set('Asia/Jakarta');
+        try {
+            $tz = new \DateTimeZone((string) (config('App')->appTimezone ?: 'Asia/Jakarta'));
+        } catch (\Throwable) {
+            $tz = new \DateTimeZone('Asia/Jakarta');
+        }
 
-        return 'Konteks waktu: hari ini ' . date('l, d F Y H:i') . ' WIB. '
+        $now = new \DateTimeImmutable('now', $tz);
+
+        return 'Konteks waktu: hari ini ' . $now->format('l, d F Y H:i') . ' WIB. '
             . 'Jangan pernah mengaku pengetahuanmu mutakhir; bila ragu soal peristiwa terkini, katakan terus terang.';
     }
 
@@ -85,7 +140,7 @@ class AiClient
         $messages = self::stampTime($messages);
 
         if ($provider === 'openai') {
-            return self::chatOpenAi($baseUrl, $model, $messages, (string) ($opt['apiKey'] ?? ''), (int) ($opt['timeout'] ?? 300));
+            return self::chatOpenAi($baseUrl, $model, $messages, (string) ($opt['apiKey'] ?? ''), (int) ($opt['timeout'] ?? 300), $opt);
         }
 
         if ($provider === 'opencode') {
@@ -100,7 +155,7 @@ class AiClient
             );
         }
 
-        return self::chatOllama($baseUrl, $model, $messages, (int) ($opt['timeout'] ?? 300));
+        return self::chatOllama($baseUrl, $model, $messages, (int) ($opt['timeout'] ?? 300), $opt);
     }
 
     /** Sisipkan konteks waktu ke pesan system pertama (bila ada). */
@@ -153,7 +208,7 @@ class AiClient
 
     // ---------------- Ollama ----------------
 
-    private static function chatOllama(string $baseUrl, string $model, array $messages, int $timeout): array
+    private static function chatOllama(string $baseUrl, string $model, array $messages, int $timeout, array $opt = []): array
     {
         try {
             $response = \Config\Services::curlrequest()->post($baseUrl . '/api/chat', [
@@ -161,7 +216,21 @@ class AiClient
                     'model'    => $model,
                     'messages' => $messages,
                     'stream'   => false,
-                    'options'  => ['temperature' => 0.7, 'num_ctx' => 4096],
+                    // keep_alive mencegah Ollama meng-unload model setelah 5 menit
+                    // idle. Tanpa ini, request pertama tiap sesi membayar biaya
+                    // memuat ulang model belasan GB ke VRAM.
+                    'keep_alive' => (string) ($opt['keep_alive'] ?? '30m'),
+                    'options'  => [
+                        // Sebelumnya 0.7: terlalu kreatif untuk laporan data.
+                        'temperature'    => (float) ($opt['temperature'] ?? 0.2),
+                        'top_p'          => (float) ($opt['top_p'] ?? 0.9),
+                        // Sebelumnya 4096: terlalu kecil. Saat prompt melewatinya
+                        // Ollama memotong dari DEPAN, membuang system prompt
+                        // beserta data akademik — akar halusinasi.
+                        'num_ctx'        => (int) ($opt['num_ctx'] ?? 8192),
+                        'num_predict'    => (int) ($opt['max_tokens'] ?? 1024),
+                        'repeat_penalty' => 1.1,
+                    ],
                 ],
                 'timeout' => $timeout,
             ]);
@@ -210,12 +279,18 @@ class AiClient
         return $apiKey !== '' ? ['Authorization' => 'Bearer ' . $apiKey] : [];
     }
 
-    private static function chatOpenAi(string $baseUrl, string $model, array $messages, string $apiKey, int $timeout): array
+    private static function chatOpenAi(string $baseUrl, string $model, array $messages, string $apiKey, int $timeout, array $opt = []): array
     {
         $base = self::openAiBase($baseUrl);
         $data = self::http('POST', $base . '/chat/completions', [
             'model'    => $model,
             'messages' => $messages,
+            // PERBAIKAN B3: tanpa parameter ini provider memakai default
+            // temperature 1.0 — sangat tidak cocok untuk laporan data akademik.
+            'temperature'       => (float) ($opt['temperature'] ?? 0.2),
+            'top_p'             => (float) ($opt['top_p'] ?? 0.9),
+            'max_tokens'        => (int) ($opt['max_tokens'] ?? 1024),
+            'frequency_penalty' => 0.1,
         ], self::bearer($apiKey), $timeout);
 
         $content = $data['choices'][0]['message']['content'] ?? null;

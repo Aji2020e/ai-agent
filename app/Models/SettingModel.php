@@ -63,13 +63,40 @@ class SettingModel extends Model
     }
 
     /** Setting global (user_id NULL) — dipakai untuk konfigurasi aplikasi. */
+    /**
+     * Cache settings global per-request.
+     *
+     * PERBAIKAN F10: sebelumnya setiap pemanggilan getGlobal() menjalankan satu
+     * query. AiClient::currentConfig() sendiri memanggilnya 3-4 kali, sehingga
+     * satu request chat bisa memicu belasan query yang hasilnya sama.
+     *
+     * @var array<string, string|null>|null
+     */
+    private static ?array $globalCache = null;
+
     public function getGlobal(string $key, ?string $default = null): ?string
     {
-        $row = $this->where('user_id', null)
-                    ->where('key', $key)
-                    ->first();
+        if (self::$globalCache === null) {
+            self::$globalCache = [];
+            try {
+                foreach ($this->where('user_id', null)->findAll() as $row) {
+                    self::$globalCache[(string) $row['key']] = $row['value'] ?? null;
+                }
+            } catch (\Throwable) {
+                // Tabel belum ada (sebelum migrasi) — jangan memutus request.
+                self::$globalCache = [];
+            }
+        }
 
-        return $row['value'] ?? $default;
+        $v = self::$globalCache[$key] ?? null;
+
+        return ($v === null || $v === '') ? $default : $v;
+    }
+
+    /** Buang cache. WAJIB dipanggil setelah settings diubah. */
+    public static function flushCache(): void
+    {
+        self::$globalCache = null;
     }
 
     public function setGlobal(string $key, string $value): bool
@@ -78,15 +105,18 @@ class SettingModel extends Model
                          ->where('key', $key)
                          ->first();
 
-        if ($existing) {
-            return $this->update($existing['id'], ['value' => $value]);
-        }
+        $ok = $existing
+            ? $this->update($existing['id'], ['value' => $value])
+            : (bool) $this->insert([
+                'user_id' => null,
+                'key'     => $key,
+                'value'   => $value,
+            ]);
 
-        return (bool) $this->insert([
-            'user_id' => null,
-            'key'     => $key,
-            'value'   => $value,
-        ]);
+        // Tanpa ini, perubahan settings tidak terlihat sampai request berikutnya.
+        self::flushCache();
+
+        return (bool) $ok;
     }
 
     /** Ambil secret (didekripsi). Nilai lama plaintext tetap dibaca. */

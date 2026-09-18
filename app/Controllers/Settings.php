@@ -30,6 +30,15 @@ class Settings extends BaseController
             'search_provider' => $settings->getGlobal('search_provider', 'off') ?: 'off',
             'search_max'     => $settings->getGlobal('search_max', '5'),
             'has_search_key' => $settings->getSecret('search_key', '') !== '',
+
+            // ---- Tuning kualitas & kecepatan jawaban ----
+            'ai_temperature'         => $settings->getGlobal('ai_temperature', '0.2'),
+            'ai_top_p'               => $settings->getGlobal('ai_top_p', '0.9'),
+            'ai_max_tokens'          => $settings->getGlobal('ai_max_tokens', '1024'),
+            'ai_max_context_tokens'  => $settings->getGlobal('ai_max_context_tokens', '6000'),
+            'ai_history_limit'       => $settings->getGlobal('ai_history_limit', '40'),
+            'ai_num_ctx'             => $settings->getGlobal('ai_num_ctx', '8192'),
+            'ai_keep_alive'          => $settings->getGlobal('ai_keep_alive', '30m'),
             'from_env'       => $settings->getGlobal('ollama_url') === null && $settings->getGlobal('ai_provider') === null,
         ]);
     }
@@ -88,7 +97,48 @@ class Settings extends BaseController
             }
         }
 
+        $this->saveTuning($settings);
+
         return redirect()->back()->with('success', 'Pengaturan AI berhasil disimpan.');
+    }
+
+    /**
+     * Simpan parameter tuning dengan pembatasan rentang.
+     *
+     * Nilai di luar rentang dikembalikan ke default, bukan ditolak — admin
+     * tidak boleh mengunci dirinya sendiri dengan angka yang membuat
+     * provider menolak request.
+     */
+    private function saveTuning(SettingModel $settings): void
+    {
+        $num = function (string $field, float $min, float $max, float $def): float {
+            $v = $this->request->getPost($field);
+            if ($v === null || trim((string) $v) === '' || ! is_numeric($v)) {
+                return $def;
+            }
+
+            return max($min, min($max, (float) $v));
+        };
+
+        $int = function (string $field, int $min, int $max, int $def): int {
+            $v = $this->request->getPost($field);
+            if ($v === null || trim((string) $v) === '' || ! is_numeric($v)) {
+                return $def;
+            }
+
+            return max($min, min($max, (int) $v));
+        };
+
+        // temperature rendah = jawaban faktual & konsisten (anti-halusinasi)
+        $settings->setGlobal('ai_temperature', (string) $num('ai_temperature', 0.0, 2.0, 0.2));
+        $settings->setGlobal('ai_top_p', (string) $num('ai_top_p', 0.1, 1.0, 0.9));
+        $settings->setGlobal('ai_max_tokens', (string) $int('ai_max_tokens', 64, 8192, 1024));
+        $settings->setGlobal('ai_max_context_tokens', (string) $int('ai_max_context_tokens', 500, 100000, 6000));
+        $settings->setGlobal('ai_history_limit', (string) $int('ai_history_limit', 2, 200, 40));
+        $settings->setGlobal('ai_num_ctx', (string) $int('ai_num_ctx', 2048, 131072, 8192));
+
+        $keepAlive = trim((string) $this->request->getPost('ai_keep_alive'));
+        $settings->setGlobal('ai_keep_alive', preg_match('/^\d+[smh]$/', $keepAlive) ? $keepAlive : '30m');
     }
 
     /** Tes koneksi provider + daftar model. Dipakai via AJAX. */

@@ -3,6 +3,7 @@
 namespace App\Filters;
 
 use App\Libraries\ApiAuth;
+use App\Libraries\Auth\PolicyGuard;
 use App\Models\ApiClientModel;
 use CodeIgniter\Filters\FilterInterface;
 use CodeIgniter\HTTP\RequestInterface;
@@ -65,6 +66,139 @@ class ApiKeyFilter implements FilterInterface
 
         $model->update($client['id'], ['last_used' => date('Y-m-d H:i:s')]);
         ApiAuth::setClient($client);
+
+        // Pasang kebijakan otorisasi. Bila subject tidak sah, kembalikan
+        // respons penolakan agar request berhenti di sini.
+        return $this->applyPolicy($request, $client);
+    }
+
+    /**
+     * Bangun & pasang AccessPolicy untuk request ini.
+     *
+     * Subject HANYA dibaca dari body (yang ikut ditandatangani HMAC), tidak
+     * pernah dari query string — alasan sama dengan BaseApi::param(): agar ID
+     * tidak nyangkut di access log, dan agar tidak bisa diubah di tengah jalan.
+     */
+    private function applyPolicy(RequestInterface $request, array $client): ?ResponseInterface
+    {
+        $policyRow = (new \App\Models\ClientPolicyModel())->forClient((int) $client['id']);
+
+        [$subjectId, $subjectType] = $this->extractSubject($request);
+
+        // Klien tanpa baris kebijakan → denyAll. Fail-closed.
+        $policy = \App\Libraries\Auth\AccessPolicy::fromClient(
+            $client,
+            $policyRow,
+            $subjectId,
+            $subjectType
+        );
+
+        // Subject wajib untuk scope self
+        if ($policy->requiresSubject() && ! empty($policyRow['subject_required']) && $policy->subjectId === null) {
+            PolicyGuard::setPolicy($policy);
+            $this->recordViolation($client, 'subject_missing', 'subject');
+
+            return $this->deny(422, "Parameter 'subject' wajib untuk klien ini. "
+                . 'Kirim {"subject":{"type":"...","id":"..."}} di body.');
+        }
+
+        // Tipe subject harus yang diizinkan kebijakan
+        if ($subjectType !== null && ! $policy->allowsSubjectType($subjectType)) {
+            PolicyGuard::setPolicy($policy);
+            $this->recordViolation($client, 'subject_type', $subjectType);
+
+            return $this->deny(403, 'Tipe subject tidak diizinkan untuk klien ini.');
+        }
+
+        PolicyGuard::setPolicy($policy);
+
+        return null;
+    }
+
+    /**
+     * Ambil subject dari body JSON. Return [id|null, type|null].
+     *
+     * @return array{0: string|null, 1: string|null}
+     */
+    private function extractSubject(RequestInterface $request): array
+    {
+        $raw = '';
+        try {
+            $raw = method_exists($request, 'getBody') ? (string) $request->getBody() : '';
+        } catch (\Throwable) {
+            $raw = '';
+        }
+
+        if ($raw === '') {
+            return [null, null];
+        }
+
+        $json = json_decode($raw, true);
+        if (! is_array($json)) {
+            return [null, null];
+        }
+
+        $sub = $json['subject'] ?? null;
+
+        // Bentuk panjang: {"subject":{"type":"mahasiswa","id":"202110110"}}
+        if (is_array($sub)) {
+            $id   = $sub['id'] ?? $sub['nid'] ?? $sub['npm'] ?? $sub['nim'] ?? $sub['nik'] ?? null;
+            $type = $sub['type'] ?? $sub['tipe'] ?? $sub['role'] ?? null;
+
+            return [self::cleanId($id), self::cleanType($type)];
+        }
+
+        // Bentuk pendek: {"subject":"202110110"} — tipe dari kebijakan klien
+        if (is_string($sub) || is_int($sub)) {
+            return [self::cleanId($sub), null];
+        }
+
+        // Bentuk paling sederhana: {"subject_id":"...","subject_type":"..."}
+        $id   = $json['subject_id'] ?? $json['id'] ?? null;
+        $type = $json['subject_type'] ?? null;
+
+        if ($id === null && $type === null) {
+            return [null, null];
+        }
+
+        return [self::cleanId($id), self::cleanType($type)];
+    }
+
+    private static function cleanId(mixed $v): ?string
+    {
+        if ($v === null || is_array($v) || is_object($v)) {
+            return null;
+        }
+        $s = trim((string) $v);
+
+        // Batas panjang wajar untuk NIM/NIK/NIDN
+        return ($s === '' || mb_strlen($s) > 40) ? null : $s;
+    }
+
+    private static function cleanType(mixed $v): ?string
+    {
+        if ($v === null || is_array($v) || is_object($v)) {
+            return null;
+        }
+        $s = strtolower(trim((string) $v));
+
+        return ($s === '' || mb_strlen($s) > 30 || ! preg_match('/^[a-z_]+$/', $s)) ? null : $s;
+    }
+
+    private function recordViolation(array $client, string $kind, string $detail): void
+    {
+        try {
+            (new \App\Models\AuthViolationModel())->record([
+                'client_id' => (int) ($client['id'] ?? 0),
+                'ip'        => service('request')->getIPAddress(),
+                'violation' => $kind,
+                'module'    => '-',
+                'attempted' => mb_substr($detail, 0, 100),
+                'endpoint'  => service('router')->controllerName() . '::' . service('router')->methodName(),
+            ]);
+        } catch (\Throwable) {
+            // Audit tidak boleh memutus request
+        }
     }
 
     public function after(RequestInterface $request, ResponseInterface $response, $arguments = null)

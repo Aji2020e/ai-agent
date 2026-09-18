@@ -147,10 +147,20 @@ class AcademicDb
      * SELECT aman: tabel & kolom tervalidasi, nilai di-escape Query Builder.
      * $orderBy wajib (SQLSRV butuh ORDER untuk LIMIT).
      * $trimWhere: kolom ID yang dicocokkan tanpa spasi tepi (data legacy sering berpadding).
+     *
+     * @param string $module slug modul pemilik query ('mahasiswa', 'dosen', ...).
+     *                       WAJIB diisi saat ada request API aktif — tanpa ini
+     *                       PolicyGuard tidak bisa membatasi cakupan, dan query
+     *                       akan ditolak. Kosong hanya sah untuk konteks internal
+     *                       (web admin) atau lookup otorisasi ('_authz').
      */
-    public static function select(string $table, array $cols, array $where = [], int $limit = 50, string $orderBy = '', array $trimWhere = []): array
+    public static function select(string $table, array $cols, array $where = [], int $limit = 50, string $orderBy = '', array $trimWhere = [], string $module = ''): array
     {
         self::ident($table);
+
+        // ---- Gerbang otorisasi (harus sebelum validasi kolom apa pun) ----
+        [$cols, $where, $limit] = self::guard($module, $table, $cols, $where, $limit);
+
         $real = self::columns($table);
 
         $safe = [];
@@ -170,6 +180,24 @@ class AcademicDb
 
         foreach ($where as $k => $v) {
             self::ident($k);
+
+            // Nilai array = WHERE kolom IN (...) — dipakai PolicyGuard untuk scope unit.
+            if (is_array($v)) {
+                $list = array_values(array_filter($v, static fn ($x) => $x !== null && $x !== ''));
+                if ($list === []) {
+                    // Daftar kosong: jangan biarkan jadi "tanpa filter".
+                    $builder->where('1 = 0', null, false);
+                    continue;
+                }
+                if (in_array($k, $trimWhere, true)) {
+                    $escaped = array_map(static fn ($x) => 'LTRIM(RTRIM(' . $k . ')) = ' . $db->escape($x), $list);
+                    $builder->where('(' . implode(' OR ', $escaped) . ')', null, false);
+                } else {
+                    $builder->whereIn($k, $list);
+                }
+                continue;
+            }
+
             if (in_array($k, $trimWhere, true)) {
                 $builder->where('LTRIM(RTRIM(' . $k . ')) = ' . $db->escape($v), null, false);
             } else {
@@ -185,6 +213,45 @@ class AcademicDb
         }
 
         return $builder->limit(max(1, min($limit, 200)))->get()->getResultArray();
+    }
+
+    /**
+     * Terapkan PolicyGuard. Return [cols, where, limit] yang sudah dibatasi.
+     *
+     * Aturan:
+     *  - Tidak ada request API aktif  → lewat apa adanya (konteks internal).
+     *  - Ada policy tapi modul kosong → TOLAK. Mencegah query menyelinap tanpa
+     *    deklarasi modul (vektor yang dipakai tool AI sebelum diperbaiki).
+     *  - Modul '_authz'               → lookup untuk keputusan otorisasi itu
+     *    sendiri; tetap disaring kolomnya tapi tidak dikunci ke subject.
+     *
+     * @return array{0: array, 1: array, 2: int}
+     */
+    private static function guard(string $module, string $table, array $cols, array $where, int $limit): array
+    {
+        if (! \App\Libraries\Auth\PolicyGuard::active()) {
+            return [$cols, $where, $limit];
+        }
+
+        if ($module === '') {
+            throw new RuntimeException(
+                'Akses data ditolak: query tanpa deklarasi modul saat request API aktif.'
+            );
+        }
+
+        if ($module === '_authz') {
+            // Hanya boleh untuk tabel referensi otorisasi, bukan data subjek.
+            $allowed = ['PSDM_KARYAWAN', 'PSDM_BAGIAN'];
+            if (! in_array(strtoupper($table), $allowed, true)) {
+                throw new RuntimeException('Lookup otorisasi hanya untuk tabel referensi.');
+            }
+
+            return [$cols, $where, $limit];
+        }
+
+        $g = \App\Libraries\Auth\PolicyGuard::enforce($module, $table, $cols, $where, $limit);
+
+        return [$g['cols'], $g['where'], $g['limit']];
     }
 
     private static function ident(string $s): void

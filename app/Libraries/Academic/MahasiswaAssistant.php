@@ -43,7 +43,7 @@ class MahasiswaAssistant extends AssistantModule
         $nim      = static::requireParam($params, 'nim', 20);
         $question = static::requireQuestion($params);
 
-        $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], [$map['id_col'] => $nim], 1, $map['id_col'] . ' ASC', [$map['id_col']]);
+        $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], [$map['id_col'] => $nim], 1, $map['id_col'] . ' ASC', [$map['id_col']], static::slug());
 
         if ($rows === []) {
             throw new RuntimeException("Data mahasiswa NIM {$nim} tidak ditemukan.");
@@ -56,7 +56,8 @@ class MahasiswaAssistant extends AssistantModule
             [$map['nilai_id_col'] => $nim],
             100,
             $map['nilai_cols'][0] . ' ASC',
-            [$map['nilai_id_col']]
+            [$map['nilai_id_col']],
+            static::slug()
         );
 
         $ips = AcademicDb::select(
@@ -65,7 +66,8 @@ class MahasiswaAssistant extends AssistantModule
             [$map['ips_id_col'] => $nim],
             20,
             $map['ips_cols'][0] . ' ASC',
-            [$map['ips_id_col']]
+            [$map['ips_id_col']],
+            static::slug()
         );
 
         // MK belum lulus (nilai E) + MK berjalan (belum ada nilai)

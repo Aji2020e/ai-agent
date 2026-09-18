@@ -13,7 +13,8 @@ class Chat extends BaseApi
     public function send()
     {
         $client = $this->client();
-        $role   = $this->roleParam();
+        // PERBAIKAN H2: peran dari kebijakan klien, bukan dari request.
+        $role   = $this->resolvedRole();
         $reason = $this->reasonParam();
 
         if ($reason === null || mb_strlen($reason) > 2000) {
@@ -27,7 +28,9 @@ class Chat extends BaseApi
             [$provider, $url, $model, $opt] = AiClient::currentConfig();
             $model = AiClient::clientModel($client, $model);
             $reply = AiClient::chat($provider, $url, $model, \App\Libraries\WebSearch::withWebContext([
-                ['role' => 'system', 'content' => 'Kamu asisten kampus yang ramah. Jawab umum tanpa data akademik internal. Bahasa Indonesia santai, tidak kaku, maksimal 200 kata.'],
+                ['role' => 'system', 'content' => \App\Libraries\PromptBuilder::general(
+                    'asisten kampus yang ramah. Jawab obrolan umum tanpa membuka data akademik internal; maksimal 200 kata'
+                )],
                 ['role' => 'user', 'content' => $reason],
             ], $reason), $opt);
         } catch (\RuntimeException $e) {

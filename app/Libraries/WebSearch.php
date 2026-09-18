@@ -63,18 +63,50 @@ class WebSearch
      * Tambahkan konteks hasil pencarian ke $messages bila pertanyaan butuh internet.
      * Aman dipanggil di semua jalur (web/API): gagal/ nonaktif = pesan dikembalikan apa adanya.
      */
+    /**
+     * Suntikkan hasil web ke dalam pesan SYSTEM.
+     *
+     * PERBAIKAN B4: sebelumnya blok hasil web ditambahkan sebagai turn
+     * `role: user` SETELAH pertanyaan asli. Akibatnya ada dua pesan user
+     * berurutan dan instruksi "jawab pertanyaan terakhir" jadi ambigu — model
+     * bisa mengira blok web itulah pertanyaannya.
+     *
+     * Sekarang struktur pesan tidak berubah: system tetap di depan, pesan user
+     * tetap yang terakhir.
+     *
+     * @param array<int, array{role: string, content: string}> $messages
+     * @return array<int, array{role: string, content: string}>
+     */
     public static function withWebContext(array $messages, string $question): array
     {
         try {
             if (! self::needsWeb($question)) {
                 return $messages;
             }
+
             $block = self::contextBlock(self::search($question));
             if ($block === '') {
                 return $messages;
             }
-            $messages[] = ['role' => 'user', 'content' => $block . "\n\nJawab pertanyaan terakhir; pakai sumber di atas bila relevan dan sebutkan bila memakai."];
+
+            $inject = "\n[HASIL WEB SEARCH]\n" . $block . "\n"
+                . "Gunakan sumber di atas hanya bila relevan, dan sebutkan bahwa "
+                . "jawabanmu memakai sumber web. Bila ada data internal di konteks, "
+                . "UTAMAKAN data internal atas sumber web.\n";
+
+            foreach ($messages as $i => $m) {
+                if (($m['role'] ?? '') === 'system') {
+                    $messages[$i]['content'] = (string) ($m['content'] ?? '') . $inject;
+
+                    return $messages;
+                }
+            }
+
+            // Tidak ada pesan system → sisipkan di DEPAN, bukan di belakang,
+            // agar pesan user tetap yang terakhir.
+            array_unshift($messages, ['role' => 'system', 'content' => trim($inject)]);
         } catch (\Throwable) {
+            // Kegagalan web search tidak boleh memutus permintaan
         }
 
         return $messages;

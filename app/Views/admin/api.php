@@ -2,6 +2,14 @@
 
 <?= $this->section('content') ?>
 
+<?php
+// Default defensif: view ini bisa dirender tanpa data kebijakan bila tabel
+// belum dimigrasi. Jangan sampai halaman admin error hanya karena itu.
+$policies       = $policies ?? [];
+$violations     = $violations ?? [];
+$violationTally = $violationTally ?? [];
+?>
+
 <?php if (! empty($newKey)): ?>
 <div class="alert alert-warning ai-card">
     <i class="bi bi-key me-2"></i><strong>API Key baru (salin sekarang!):</strong>
@@ -54,7 +62,7 @@
                 </form>
                 <div class="table-responsive">
                     <table class="table table-sm table-hover align-middle">
-                        <thead class="table-light"><tr><th>Nama</th><th>Modul</th><th>Skill</th><th>Keamanan</th><th>Status</th><th>Aksi</th></tr></thead>
+                        <thead class="table-light"><tr><th>Nama</th><th>Modul</th><th>Skill</th><th>Wewenang</th><th>Keamanan</th><th>Status</th><th>Aksi</th></tr></thead>
                         <tbody>
                         <?php foreach ($clients as $c): ?>
                             <tr>
@@ -67,6 +75,38 @@
                                         </select>
                                         <button class="btn btn-sm btn-outline-primary" title="Simpan model"><i class="bi bi-check-lg"></i></button>
                                     </form>
+                                </td>
+                                <?php $pol = $policies[$c['id']] ?? null; ?>
+                                <td>
+                                    <?php if ($pol === null): ?>
+                                        <span class="badge text-bg-danger">tanpa kebijakan</span><br>
+                                        <small class="text-secondary">semua data ditolak</small>
+                                    <?php else: ?>
+                                        <?php
+                                            $scopeBadge = [
+                                                'self' => ['primary', 'diri sendiri'],
+                                                'unit' => ['info',    'unit: ' . esc($pol['unit_type'] ?? '') . ' ' . esc($pol['unit_ids'] ?? '')],
+                                                'role' => ['secondary','peran: ' . esc($pol['role_scope'] ?? '')],
+                                                'all'  => ['dark',    'semua baris'],
+                                            ];
+                                            [$bc, $bl] = $scopeBadge[$pol['scope']] ?? ['secondary', $pol['scope']];
+                                        ?>
+                                        <span class="badge text-bg-<?= $bc ?>"><?= $bl ?></span>
+                                        <?php if (($pol['on_violation'] ?? '') === 'log_only'): ?>
+                                            <span class="badge text-bg-warning" title="Pelanggaran dicatat tapi belum ditolak">pantau</span>
+                                        <?php else: ?>
+                                            <span class="badge text-bg-success" title="Pelanggaran ditolak">tegak</span>
+                                        <?php endif; ?>
+                                        <br><small class="text-secondary">
+                                            baris <?= (int) ($pol['row_limit'] ?? 0) ?> · query <?= (int) ($pol['query_budget'] ?? 0) ?>
+                                            · tool: <code><?= esc($pol['tools_allowed'] ?? '') !== '' ? $pol['tools_allowed'] : 'tidak ada' ?></code>
+                                        </small>
+                                    <?php endif; ?>
+                                    <br>
+                                    <button class="btn btn-sm btn-outline-primary mt-1" data-bs-toggle="modal"
+                                            data-bs-target="#policyModal<?= (int) $c['id'] ?>">
+                                        <i class="bi bi-shield-check me-1"></i>Kebijakan
+                                    </button>
                                 </td>
                                 <td><small>
                                     <?= ! empty($c['expires_at']) ? 'exp: ' . esc($c['expires_at']) . '<br>' : '' ?>
@@ -85,7 +125,7 @@
                             </tr>
                         <?php endforeach; ?>
                         <?php if (empty($clients)): ?>
-                            <tr><td colspan="6" class="text-center text-secondary">Belum ada klien.</td></tr>
+                            <tr><td colspan="7" class="text-center text-secondary">Belum ada klien.</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
@@ -300,6 +340,216 @@
         </div>
     </div>
 </div>
+
+<!-- Pelanggaran otorisasi -->
+<div class="card ai-card mt-3">
+    <div class="card-body p-4">
+        <h5 class="fw-bold"><i class="bi bi-exclamation-octagon me-2"></i>Pelanggaran Wewenang
+            <small class="text-secondary fw-normal">&mdash; 60 menit terakhir, per klien</small></h5>
+        <p class="text-secondary small">
+            Setiap percobaan melewati batas dicatat di sini, termasuk yang masih diizinkan karena klien
+            berada dalam mode <em>pantau</em>. Lonjakan <code>idor</code> dari satu klien adalah tanda
+            enumerasi data &mdash; pertimbangkan membekukan klien itu.
+        </p>
+
+        <?php if (empty($violationTally)): ?>
+            <div class="alert alert-success mb-2"><i class="bi bi-check-circle me-2"></i>Tidak ada pelanggaran dalam satu jam terakhir.</div>
+        <?php else: ?>
+            <div class="table-responsive mb-3">
+                <table class="table table-sm table-hover align-middle">
+                    <thead class="table-light"><tr><th>Klien</th><th>Jenis</th><th>Jumlah</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($violationTally as $t): ?>
+                        <tr>
+                            <td><?= esc($t['client_name'] ?? '(tanpa klien)') ?></td>
+                            <td><span class="badge text-bg-<?= in_array($t['violation'], ['idor','no_policy','module_denied'], true) ? 'danger' : 'warning' ?>"><?= esc($t['violation']) ?></span></td>
+                            <td><strong><?= (int) $t['n'] ?></strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
+        <?php if (! empty($violations)): ?>
+            <h6 class="fw-bold mt-3">Rincian terbaru</h6>
+            <div class="table-responsive" style="max-height:320px; overflow-y:auto">
+                <table class="table table-sm table-hover align-middle">
+                    <thead class="table-light"><tr><th>Waktu</th><th>Klien</th><th>Jenis</th><th>Modul</th><th>Dicoba</th><th>Seharusnya</th><th>IP</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($violations as $v): ?>
+                        <tr>
+                            <td class="text-nowrap"><small><?= esc($v['created_at']) ?></small></td>
+                            <td><small><?= esc($v['client_name'] ?? '-') ?></small></td>
+                            <td><span class="badge text-bg-danger"><?= esc($v['violation']) ?></span></td>
+                            <td><small><code><?= esc($v['module'] ?? '-') ?></code></small></td>
+                            <td><small><code><?= esc($v['attempted'] ?? '-') ?></code></small></td>
+                            <td><small><code><?= esc($v['allowed'] ?? '-') ?></code></small></td>
+                            <td><small><?= esc($v['ip'] ?? '-') ?></small></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Modal kebijakan per klien -->
+<?php foreach ($clients as $c): $pol = $policies[$c['id']] ?? null; ?>
+    <?php
+        $fp = [];
+        if ($pol !== null && ! empty($pol['field_policy'])) {
+            $decoded = json_decode((string) $pol['field_policy'], true);
+            if (is_array($decoded)) { $fp = $decoded; }
+        }
+        $toolsNow = array_map('trim', explode(',', (string) ($pol['tools_allowed'] ?? '')));
+        $csv = static fn ($module, $kind) => esc(implode(', ', $fp[$module][$kind] ?? []));
+    ?>
+    <div class="modal fade" id="policyModal<?= (int) $c['id'] ?>" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <form action="<?= site_url('admin/api/policy') ?>" method="post" class="modal-content">
+                <?= csrf_field() ?>
+                <input type="hidden" name="client_id" value="<?= (int) $c['id'] ?>">
+
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Kebijakan &mdash; <?= esc($c['name']) ?></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+                </div>
+
+                <div class="modal-body">
+                    <div class="alert alert-secondary small">
+                        Kebijakan ini ditetapkan <strong>admin</strong> dan tidak bisa diubah oleh aplikasi pemanggil.
+                        Menentukan sejauh mana klien boleh menjangkau data, kolom apa yang boleh keluar,
+                        dan tool AI mana yang boleh dipakai.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Cakupan data</label>
+                        <select name="scope" class="form-select">
+                            <?php foreach ([
+                                'self' => 'self — hanya data dirinya sendiri (portal mahasiswa/dosen)',
+                                'unit' => 'unit — semua orang dalam fakultas/prodi/bagian tertentu',
+                                'role' => 'role — semua orang dengan peran tertentu',
+                                'all'  => 'all — tanpa pembatasan baris (super admin; tetap dibatasi daftar modul)',
+                            ] as $k => $label): ?>
+                                <option value="<?= $k ?>" <?= ($pol['scope'] ?? 'self') === $k ? 'selected' : '' ?>><?= $label ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold">Wajib kirim subject</label>
+                            <select name="subject_required" class="form-select">
+                                <option value="1" <?= (int) ($pol['subject_required'] ?? 1) === 1 ? 'selected' : '' ?>>Ya</option>
+                                <option value="0" <?= (int) ($pol['subject_required'] ?? 1) === 0 ? 'selected' : '' ?>>Tidak</option>
+                            </select>
+                            <div class="form-text">Otomatis "Ya" bila scope = self.</div>
+                        </div>
+                        <div class="col-md-8 mb-3">
+                            <label class="form-label fw-semibold">Tipe subject diizinkan</label>
+                            <input type="text" name="subject_types" class="form-control"
+                                   value="<?= esc($pol['subject_types'] ?? 'mahasiswa') ?>" placeholder="mahasiswa, dosen, staff">
+                            <div class="form-text">Kosongkan = semua tipe diterima.</div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold">Tipe unit</label>
+                            <input type="text" name="unit_type" class="form-control"
+                                   value="<?= esc($pol['unit_type'] ?? '') ?>" placeholder="fakultas / prodi / bagian">
+                        </div>
+                        <div class="col-md-8 mb-3">
+                            <label class="form-label fw-semibold">ID unit diizinkan</label>
+                            <input type="text" name="unit_ids" class="form-control"
+                                   value="<?= esc($pol['unit_ids'] ?? '') ?>" placeholder="FT, FMIPA">
+                            <div class="form-text">Wajib diisi bila scope = unit.</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Peran (scope = role)</label>
+                        <input type="text" name="role_scope" class="form-control"
+                               value="<?= esc($pol['role_scope'] ?? '') ?>" placeholder="dosen / staff">
+                    </div>
+
+                    <hr>
+                    <h6 class="fw-bold">Kolom per modul</h6>
+                    <p class="text-secondary small">
+                        <strong>Boleh</strong> = daftar putih (kosongkan berarti semua boleh kecuali yang dilarang).
+                        <strong>Dilarang</strong> = daftar hitam. Kolom sensitif seperti <code>pass</code>,
+                        <code>foto</code>, <code>penghasilan_ortu</code> selalu ditolak sistem apa pun isian di sini.
+                    </p>
+                    <?php foreach (['mahasiswa', 'dosen', 'staff'] as $mod): ?>
+                        <div class="row mb-2">
+                            <div class="col-md-2"><label class="form-label"><code><?= $mod ?></code></label></div>
+                            <div class="col-md-5">
+                                <input type="text" name="field_allow[<?= $mod ?>]" class="form-control form-control-sm"
+                                       value="<?= $csv($mod, 'allow') ?>" placeholder="boleh: npm, nama, nilai">
+                            </div>
+                            <div class="col-md-5">
+                                <input type="text" name="field_deny[<?= $mod ?>]" class="form-control form-control-sm"
+                                       value="<?= $csv($mod, 'deny') ?>" placeholder="dilarang: no_hp, alamat">
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+
+                    <hr>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold">Maks baris per query</label>
+                            <input type="number" name="row_limit" class="form-control" min="1" max="5000"
+                                   value="<?= (int) ($pol['row_limit'] ?? 50) ?>">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold">Anggaran query / request</label>
+                            <input type="number" name="query_budget" class="form-control" min="1" max="200"
+                                   value="<?= (int) ($pol['query_budget'] ?? 8) ?>">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold">Mode penegakan</label>
+                            <select name="on_violation" class="form-select">
+                                <option value="log_only" <?= ($pol['on_violation'] ?? 'log_only') === 'log_only' ? 'selected' : '' ?>>Pantau (catat saja)</option>
+                                <option value="deny_and_log" <?= ($pol['on_violation'] ?? '') === 'deny_and_log' ? 'selected' : '' ?>>Tegakkan (tolak + catat)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Tool AI yang diizinkan</label>
+                        <div>
+                            <?php foreach (['db_lookup' => 'Lookup database', 'web_search' => 'Pencarian web', 'file_reader' => 'Baca file'] as $tk => $tl): ?>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="tools_allowed[]"
+                                           id="tool<?= $tk ?><?= (int) $c['id'] ?>" value="<?= $tk ?>"
+                                           <?= in_array($tk, $toolsNow, true) ? 'checked' : '' ?>>
+                                    <label class="form-check-label" for="tool<?= $tk ?><?= (int) $c['id'] ?>"><?= $tl ?></label>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <div class="form-text">
+                            Tool yang tidak dicentang <strong>tidak terdaftar</strong> untuk klien ini &mdash;
+                            AI bahkan tidak tahu tool itu ada. <code>file_reader</code> sebaiknya tetap mati untuk klien eksternal.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Catatan</label>
+                        <textarea name="notes" class="form-control" rows="2"
+                                  placeholder="Penanggung jawab, tujuan integrasi, tanggal review…"><?= esc($pol['notes'] ?? '') ?></textarea>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-save me-2"></i>Simpan Kebijakan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+<?php endforeach; ?>
 
 <?= $this->endSection() ?>
 

@@ -31,12 +31,50 @@ class ChatHistoryModel extends Model
                     ->findAll();
     }
 
-    public function getSessionMessages(string $sessionId, int $userId): array
+    /**
+     * Pesan sebuah sesi, urut kronologis.
+     *
+     * PERBAIKAN B2: sebelumnya findAll() tanpa batas, sehingga sesi panjang
+     * membuat prompt melewati context window provider. Provider lalu memotong
+     * dari DEPAN — yang pertama terbuang adalah system prompt berisi data
+     * akademik, dan model menjawab tanpa data.
+     *
+     * @param int $limit 0 = tanpa batas (untuk menampilkan riwayat di UI).
+     *                   Untuk konteks AI, selalu isi dengan angka.
+     */
+    public function getSessionMessages(string $sessionId, int $userId, int $limit = 0): array
     {
+        if ($limit > 0) {
+            // Ambil N TERBARU lebih dulu, lalu balikkan ke urutan kronologis.
+            $rows = $this->where('session_id', $sessionId)
+                         ->where('user_id', $userId)
+                         ->orderBy('id', 'DESC')
+                         ->limit($limit)
+                         ->findAll();
+
+            return array_reverse($rows);
+        }
+
         return $this->where('session_id', $sessionId)
                     ->where('user_id', $userId)
                     ->orderBy('id', 'ASC')
                     ->findAll();
+    }
+
+    /**
+     * Cek kepemilikan sesi tanpa menarik seluruh riwayat.
+     *
+     * Sebelumnya Chat::send() memanggil getSessionMessages() hanya untuk
+     * memastikan sesi milik user — mengambil seluruh percakapan demi satu
+     * boolean. Pada sesi panjang itu query yang sangat boros.
+     */
+    public function sessionExists(string $sessionId, int $userId): bool
+    {
+        return $this->select('id')
+                    ->where('session_id', $sessionId)
+                    ->where('user_id', $userId)
+                    ->limit(1)
+                    ->first() !== null;
     }
 
     public function deleteSession(string $sessionId, int $userId): bool

@@ -165,8 +165,10 @@ class ModuleRegistry
         }
 
         try {
+            // '_authz': lookup untuk MENENTUKAN wewenang (bagian staff),
+            // bukan mengambil data subjek. Lihat AcademicDb::guard().
             $rows = \App\Libraries\AcademicDb::select(
-                'PSDM_KARYAWAN', ['nik', 'id_bagian'], ['nik' => $nik], 1, 'nik ASC', ['nik']
+                'PSDM_KARYAWAN', ['nik', 'id_bagian'], ['nik' => $nik], 1, 'nik ASC', ['nik'], '_authz'
             );
             if ($rows === []) {
                 return $cache[$nik] = null;
@@ -174,7 +176,7 @@ class ModuleRegistry
             $bid  = trim((string) ($rows[0]['id_bagian'] ?? ''));
             $nama = '';
             if ($bid !== '') {
-                $brow = \App\Libraries\AcademicDb::select('PSDM_BAGIAN', ['nama_bagian'], ['id_bagian' => $bid], 1, 'id_bagian ASC');
+                $brow = \App\Libraries\AcademicDb::select('PSDM_BAGIAN', ['nama_bagian'], ['id_bagian' => $bid], 1, 'id_bagian ASC', [], '_authz');
                 $nama = trim((string) ($brow[0]['nama_bagian'] ?? ''));
             }
 
@@ -217,8 +219,11 @@ class ModuleRegistry
                     // 2. Role sama dengan slug modul (mis. hasil wizard)
                     $slugs = [$norm];
                 } else {
-                    // 3. Role asing → hak admin umum (tetap dibatasi scope key)
-                    $slugs = $map['admin_akademik'] ?? [];
+                    // 3. PERBAIKAN H3 — role asing = TIDAK ADA modul.
+                    // Sebelumnya cabang ini memberi hak admin_akademik, sehingga
+                    // mengirim "role":"asdfgh" saja sudah cukup untuk naik hak.
+                    // Kebijakan sekarang gagal-tertutup: tidak dikenali = ditolak.
+                    $slugs = [];
                 }
             }
         }

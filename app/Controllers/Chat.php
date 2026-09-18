@@ -38,6 +38,12 @@ class Chat extends BaseController
         $this->apiKey = (string) ($opt['apiKey'] ?? '');
         $this->ocUser = (string) ($opt['username'] ?? '');
         $this->ocPass = (string) ($opt['password'] ?? '');
+
+        // Sesi web internal: bukan request API eksternal, tapi tetap diberi
+        // kebijakan agar tool berbahaya (file_reader) tidak tersedia bagi AI.
+        \App\Libraries\Auth\PolicyGuard::setPolicy(
+            \App\Libraries\Auth\AccessPolicy::internalWebSession()
+        );
     }
 
     public function index()
@@ -84,8 +90,9 @@ class Chat extends BaseController
         }
 
         if (! empty($sessionId)) {
-            $owned = $this->chatModel->getSessionMessages($sessionId, $userId);
-            if (empty($owned)) {
+            // Sebelumnya memanggil getSessionMessages() hanya untuk memastikan
+            // sesi milik user — menarik seluruh percakapan demi satu boolean.
+            if (! $this->chatModel->sessionExists($sessionId, $userId)) {
                 return $this->response->setJSON(['error' => 'Sesi tidak valid.', 'csrf' => csrf_hash()])->setStatusCode(403);
             }
         }
@@ -125,6 +132,13 @@ class Chat extends BaseController
             $message .= "\n\n--- Lampiran: {$attach['name']} ---\n" . $attach['text'];
         }
 
+        // PERBAIKAN B1 (langkah 1/2): ambil riwayat SEBELUM pesan baru disimpan.
+        // Sebelumnya pesan disimpan dulu, lalu buildContext() mengambil riwayat
+        // yang sudah memuat pesan itu, DAN PromptBuilder menambahkannya lagi —
+        // sehingga pesan user terkirim dua kali dalam urutan yang salah.
+        $historyLimit = (int) $this->settings->getGlobal('ai_history_limit', '40');
+        $history      = $this->chatModel->getSessionMessages($sessionId, $userId, max(2, $historyLimit));
+
         $this->chatModel->saveMessage([
             'user_id'         => $userId,
             'session_id'      => $sessionId,
@@ -134,18 +148,9 @@ class Chat extends BaseController
             'attachment_path' => $attach['path'],
         ]);
 
-        $context = $this->buildContext($sessionId, $userId, $message);
-
-        // Sumber internet cadangan bila topik kekinian
-        if (\App\Libraries\WebSearch::needsWeb($message)) {
-            try {
-                $block = \App\Libraries\WebSearch::contextBlock(\App\Libraries\WebSearch::search($message));
-                if ($block !== '') {
-                    $context[] = ['role' => 'user', 'content' => $block . "\n\nJawab pertanyaan terakhir; pakai sumber di atas bila relevan dan sebutkan bila memakai."];
-                }
-            } catch (\Throwable) {
-            }
-        }
+        // Sumber internet cadangan kini disuntik ke SYSTEM prompt di dalam
+        // buildContext(), bukan lagi sebagai turn user tambahan (perbaikan B4).
+        $context = $this->buildContext($history, $sessionId, $userId, $message);
 
         try {
             $assistantReply = AiClient::chat(
@@ -199,6 +204,8 @@ class Chat extends BaseController
 
         $this->chatModel->deleteSession($sessionId, $userId);
         $this->settings->where('user_id', null)->where('key', 'opencode_session_' . $sessionId)->delete();
+        // delete() langsung melewati setGlobal(), jadi cache harus dibuang manual.
+        SettingModel::flushCache();
 
         return $this->response->setJSON(['success' => true, 'csrf' => csrf_hash()]);
     }
@@ -222,10 +229,16 @@ class Chat extends BaseController
         return $this->response->setJSON(['success' => true, 'csrf' => csrf_hash()]);
     }
 
-    protected function buildContext(string $sessionId, int $userId, string $currentMessage = ''): array
+    /**
+     * Rakit pesan untuk AI.
+     *
+     * PERBAIKAN B1: riwayat diterima sebagai parameter, BUKAN diambil lagi di
+     * dalam sini setelah pesan baru disimpan. Itu sumber duplikasi pesan.
+     *
+     * @param array<int, array> $history riwayat SEBELUM pesan saat ini disimpan
+     */
+    protected function buildContext(array $history, string $sessionId, int $userId, string $currentMessage = ''): array
     {
-        $messages = $this->chatModel->getSessionMessages($sessionId, $userId);
-
         // --- Context Memory & Skill Routing ---
         $contextModel = new ChatContextModel();
         $context      = $contextModel->getContext($sessionId, $userId);
@@ -266,28 +279,27 @@ class Chat extends BaseController
             $contextModel->saveContext($sessionId, $userId, $context);
         }
 
-        // --- Build System Prompt with Skill Context ---
-        if ($skillResult !== null) {
-            $promptMessages = PromptBuilder::build($skillName, $skillResult, $currentMessage);
-        } else {
-            $promptMessages = [
-                ['role' => 'system', 'content' => 'Kamu adalah AI Coding & Academic Assistant.'],
-            ];
+        // ---- 1. Bangun SYSTEM PROMPT saja (PromptBuilder tak lagi menyisipkan
+        //         pesan user — itu tugas ContextBuilder) ----
+        $system = $skillResult !== null
+            ? PromptBuilder::build($skillName, $skillResult)
+            : PromptBuilder::general('AI Coding & Academic Assistant');
+
+        // ---- 2. PERBAIKAN B4: hasil web masuk ke SYSTEM, bukan sebagai
+        //         turn user tambahan yang menggeser pertanyaan asli ----
+        if (\App\Libraries\WebSearch::needsWeb($currentMessage)) {
+            $tmp    = \App\Libraries\WebSearch::withWebContext(
+                [['role' => 'system', 'content' => $system]],
+                $currentMessage
+            );
+            $system = (string) ($tmp[0]['content'] ?? $system);
         }
 
-        $aiContext = $promptMessages;
-
-        foreach ($messages as $msg) {
-            if ($msg['role'] === 'system') {
-                continue;
-            }
-            $aiContext[] = [
-                'role'    => $msg['role'],
-                'content' => $msg['content'],
-            ];
-        }
-
-        return $aiContext;
+        // ---- 3. ContextBuilder menjamin urutan benar + anggaran token ----
+        return (new \App\Libraries\ContextBuilder(
+            (int) $this->settings->getGlobal('ai_max_context_tokens', '6000'),
+            (int) $this->settings->getGlobal('ai_max_tokens', '1024'),
+        ))->build($system, $history, $currentMessage);
     }
 
     /** Daftar model dari provider aktif (untuk dropdown). */

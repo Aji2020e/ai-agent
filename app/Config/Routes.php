@@ -57,6 +57,8 @@ $routes->group('admin', ['filter' => 'admin'], static function ($routes) {
     $routes->post('settings/test', 'Settings::test');
     $routes->get('api', 'AdminApi::index');
     $routes->post('api/clients', 'AdminApi::createClient');
+    // Kebijakan otorisasi ("prosedur") per klien + jejak pelanggaran
+    $routes->post('api/policy', 'AdminApi::savePolicy');
     $routes->post('api/clients/hmac/(:num)', 'AdminApi::hmacClient/$1');
     $routes->post('api/clients/toggle/(:num)', 'AdminApi::toggleClient/$1');
     $routes->post('api/clients/model/(:num)', 'AdminApi::modelClient/$1');

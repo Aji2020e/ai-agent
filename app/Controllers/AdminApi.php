@@ -22,6 +22,11 @@ class AdminApi extends BaseController
         $logs    = (new ApiLogModel())->recent(30);
         $akad    = AcademicDb::config(true);
 
+        // Kebijakan otorisasi per klien + jejak pelanggaran terbaru
+        $policies   = $this->policiesOrEmpty();
+        $violations = $this->violationsOrEmpty(50);
+        $violationTally = $this->violationTallyOrEmpty(60);
+
         // SENGAJA tidak konek saat render — status dicek async via tombol Tes
         // agar halaman tetap ringan walau DB akademik tak terjangkau/firewall.
         $akadStatus = ['ok' => null];
@@ -34,18 +39,175 @@ class AdminApi extends BaseController
             'logs'       => $logs,
             'akad'       => $akad,
             'akadStatus' => $akadStatus,
+            'policies'       => $policies,
+            'violations'     => $violations,
+            'violationTally' => $violationTally,
             'newKey'     => session()->getFlashdata('newKey'),
             'modules'    => ['mahasiswa', 'dosen', 'staff'],
             'docModules' => ApiDocModel::$modules,
-            'skills'     => [
-                'academic'        => 'Data Akademik',
-                'student_profile' => 'Profil Mahasiswa',
-                'staff_profile'   => 'Profil Staff',
-                'writing'         => 'Asisten Skripsi',
-                'coding'          => 'Coding Assistant',
-                'general'         => 'Obrolan Umum',
-            ],
+            'skills'     => $this->skillCatalog(),
         ]);
+    }
+
+    /**
+     * Simpan kebijakan otorisasi sebuah klien ("prosedur"-nya).
+     *
+     * Inilah tempat admin menetapkan batas wewenang tiap aplikasi pemanggil:
+     * sejauh mana boleh menjangkau data, kolom apa yang boleh keluar, dan
+     * tool AI mana yang boleh dipakai.
+     */
+    public function savePolicy()
+    {
+        $clientId = (int) $this->request->getPost('client_id');
+
+        if ($clientId <= 0) {
+            return redirect()->back()->with('error', 'Klien tidak valid.');
+        }
+
+        $client = (new ApiClientModel())->find($clientId);
+        if ($client === null) {
+            return redirect()->back()->with('error', 'Klien tidak ditemukan.');
+        }
+
+        $scope = (string) $this->request->getPost('scope');
+        if (! in_array($scope, ['self', 'unit', 'role', 'all'], true)) {
+            $scope = 'self';
+        }
+
+        $onViolation = $this->request->getPost('on_violation') === 'deny_and_log'
+            ? 'deny_and_log'
+            : 'log_only';
+
+        // ---- Kebijakan kolom: only allow/deny per modul ----
+        $fieldPolicy = [];
+        $allowRaw    = (array) $this->request->getPost('field_allow');
+        $denyRaw     = (array) $this->request->getPost('field_deny');
+
+        foreach ($allowRaw as $module => $cols) {
+            $cols = $this->normalizeColumnList($cols);
+            if ($cols !== []) {
+                $fieldPolicy[(string) $module]['allow'] = $cols;
+            }
+        }
+        foreach ($denyRaw as $module => $cols) {
+            $cols = $this->normalizeColumnList($cols);
+            if ($cols !== []) {
+                $fieldPolicy[(string) $module]['deny'] = $cols;
+            }
+        }
+
+        // ---- Tool: hanya nama yang dikenal ----
+        $knownTools = ['db_lookup', 'web_search', 'file_reader'];
+        $tools      = array_values(array_intersect(
+            $knownTools,
+            array_map('trim', (array) $this->request->getPost('tools_allowed'))
+        ));
+
+        $data = [
+            'scope'            => $scope,
+            'subject_required' => $this->request->getPost('subject_required') ? 1 : 0,
+            'subject_types'    => $this->normalizeCsv((string) $this->request->getPost('subject_types'), 100),
+            'unit_type'        => $this->normalizeCsv((string) $this->request->getPost('unit_type'), 30) ?: null,
+            'unit_ids'         => $this->normalizeCsv((string) $this->request->getPost('unit_ids'), 2000) ?: null,
+            'role_scope'       => $this->normalizeCsv((string) $this->request->getPost('role_scope'), 100) ?: null,
+            'field_policy'     => $fieldPolicy === [] ? null : json_encode($fieldPolicy, JSON_UNESCAPED_UNICODE),
+            'row_limit'        => max(1, min(5000, (int) $this->request->getPost('row_limit') ?: 50)),
+            'query_budget'     => max(1, min(200, (int) $this->request->getPost('query_budget') ?: 8)),
+            'tools_allowed'    => implode(',', $tools),
+            'on_violation'     => $onViolation,
+            'notes'            => mb_substr(trim((string) $this->request->getPost('notes')), 0, 1000) ?: null,
+        ];
+
+        // scope self tanpa subject wajib adalah konfigurasi yang tidak masuk akal
+        if ($scope === 'self') {
+            $data['subject_required'] = 1;
+        }
+        // scope unit tanpa unit_ids = tidak bisa membatasi apa pun → tolak
+        if ($scope === 'unit' && ($data['unit_ids'] === null || $data['unit_type'] === null)) {
+            return redirect()->back()->with(
+                'error',
+                'Scope "unit" wajib punya tipe unit dan daftar ID unit. Tanpa itu pembatasannya kosong.'
+            );
+        }
+
+        try {
+            (new \App\Models\ClientPolicyModel())->savePolicy($clientId, $data);
+        } catch (\Throwable $e) {
+            return redirect()->back()->with('error', 'Gagal menyimpan kebijakan: ' . $e->getMessage());
+        }
+
+        return redirect()->back()->with(
+            'success',
+            $onViolation === 'log_only'
+                ? 'Kebijakan disimpan dalam MODE PANTAU (pelanggaran dicatat, belum ditolak).'
+                : 'Kebijakan disimpan dan DITEGAKKAN. Pelanggaran akan ditolak.'
+        );
+    }
+
+    /** Pecah masukan kolom (array checkbox atau string CSV) jadi daftar bersih. */
+    private function normalizeColumnList(mixed $cols): array
+    {
+        if (is_string($cols)) {
+            $cols = preg_split('/[\s,]+/', $cols) ?: [];
+        }
+        if (! is_array($cols)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($cols as $c) {
+            $c = strtolower(trim((string) $c));
+            // Hanya nama kolom SQL yang wajar — mencegah penyelundupan apa pun
+            if ($c !== '' && preg_match('/^[a-z0-9_]{1,64}$/', $c)) {
+                $out[] = $c;
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /** CSV bersih dengan batas panjang. */
+    private function normalizeCsv(string $v, int $maxLen): string
+    {
+        $v = mb_substr(trim($v), 0, $maxLen);
+        if ($v === '') {
+            return '';
+        }
+
+        $parts = array_values(array_filter(
+            array_map('trim', preg_split('/[\s,]+/', $v) ?: []),
+            static fn ($x) => $x !== ''
+        ));
+
+        return implode(',', array_unique($parts));
+    }
+
+    /** Kebijakan terindeks client_id; [] bila tabel belum dimigrasi. */
+    private function policiesOrEmpty(): array
+    {
+        try {
+            return (new \App\Models\ClientPolicyModel())->allByClient();
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private function violationsOrEmpty(int $limit): array
+    {
+        try {
+            return (new \App\Models\AuthViolationModel())->recent($limit);
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private function violationTallyOrEmpty(int $minutes): array
+    {
+        try {
+            return (new \App\Models\AuthViolationModel())->tally($minutes);
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     public function createClient()
@@ -58,11 +220,19 @@ class AdminApi extends BaseController
 
         $mods = $this->request->getPost('modules') ?? [];
         $mods = array_values(array_intersect((array) $mods, ['mahasiswa', 'dosen', 'staff']));
-        $scope = $mods === [] ? '*' : implode(',', $mods);
 
         $skills = $this->request->getPost('skills') ?? [];
         $allowedSkills = $this->normalizeSkills($skills);
-        $skillsScope = $allowedSkills === [] ? '*' : implode(',', $allowedSkills);
+
+        // '*' tidak lagi dipakai sebagai penanda "semua". Di AccessPolicy, '*'
+        // berarti daftar KOSONG, jadi klien wildcard akan kehilangan seluruh
+        // aksesnya. Karena itu daftar di-materialisasi menjadi slug nyata.
+        $allModules = array_keys(\App\Libraries\Academic\ModuleRegistry::allActive());
+        $allSkills  = array_keys($this->skillCatalog());
+
+        $scope       = $mods === [] ? implode(',', $allModules) : implode(',', $mods);
+        $skillsScope = $allowedSkills === [] ? implode(',', $allSkills) : implode(',', $allowedSkills);
+        $catchAll    = $mods === [] || $allowedSkills === [];
 
         $days = (int) $this->request->getPost('expiry_days');
         $ips  = trim((string) $this->request->getPost('ips'));
@@ -76,8 +246,37 @@ class AdminApi extends BaseController
             'model'        => $cm !== '' ? $cm : null,
         ]);
 
+        // Kebijakan awal: aman tapi belum membatasi baris. Admin WAJIB
+        // meninjau sebelum klien dipakai produksi.
+        try {
+            (new \App\Models\ClientPolicyModel())->savePolicy((int) $made['id'], [
+                'scope'            => 'all',
+                'subject_required' => 0,
+                'subject_types'    => '',
+                'unit_type'        => null,
+                'unit_ids'         => null,
+                'role_scope'       => null,
+                'field_policy'     => null,
+                'row_limit'        => 200,
+                'query_budget'     => 25,
+                // Tool sengaja KOSONG: AI klien ini belum boleh memanggil tool
+                // apa pun sampai admin membukanya secara eksplisit.
+                'tools_allowed'    => '',
+                'on_violation'     => 'log_only',
+                'notes'            => 'Klien baru. WAJIB atur scope, kolom, dan tool sebelum produksi.',
+            ]);
+        } catch (\Throwable) {
+            // Tabel belum dimigrasi — jangan gagalkan pembuatan klien
+        }
+
+        $msg = 'Klien dibuat. Salin key sekarang — hanya tampil sekali!';
+        if ($catchAll) {
+            $msg .= ' PERHATIAN: tidak ada modul/skill yang dicentang, jadi seluruh modul aktif diberikan. '
+                  . 'Segera persempit lewat tombol Kebijakan.';
+        }
+
         return redirect()->to(site_url('admin/api'))
-            ->with('success', 'Klien dibuat. Salin key sekarang — hanya tampil sekali!')
+            ->with('success', $msg)
             ->with('newKey', $made['key']);
     }
 
@@ -116,15 +315,43 @@ class AdminApi extends BaseController
     }
 
     /** Bersihkan daftar skill: array valid atau []. */
-    private static function normalizeSkills($skills): array
+    /**
+     * Katalog skill yang bisa diberikan ke klien.
+     *
+     * Satu sumber kebenaran: dipakai oleh index() (untuk checkbox UI),
+     * normalizeSkills() (untuk validasi input), dan createClient()
+     * (untuk materialisasi daftar penuh).
+     *
+     * Daftarnya harus selaras dengan SkillRouter::$skillMap. Sebelumnya
+     * dosen_profile, dosen_kelas, dosen_rps, dan writing_artikel ada di router
+     * tapi tidak bisa diberikan lewat admin panel.
+     */
+    private function skillCatalog(): array
     {
-        $valid = ['academic', 'student_profile', 'staff_profile', 'writing', 'coding', 'general'];
+        return [
+            'academic'        => 'Data Akademik',
+            'student_profile' => 'Profil Mahasiswa',
+            'dosen_profile'   => 'Profil Dosen',
+            'dosen_kelas'     => 'Kelas Dosen',
+            'dosen_rps'       => 'RPS Dosen',
+            'staff_profile'   => 'Profil Staff',
+            'writing'         => 'Asisten Skripsi',
+            'writing_artikel' => 'Penulisan Artikel',
+            'coding'          => 'Coding Assistant',
+            'general'         => 'Obrolan Umum',
+        ];
+    }
 
+    private function normalizeSkills($skills): array
+    {
         if (! is_array($skills)) {
             return [];
         }
 
-        return array_values(array_intersect(array_map('strval', $skills), $valid));
+        return array_values(array_intersect(
+            array_map('strval', $skills),
+            array_keys($this->skillCatalog())
+        ));
     }
 
     /** Bersihkan nama model: kosong = ikut default global. */

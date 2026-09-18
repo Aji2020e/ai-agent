@@ -68,6 +68,57 @@ class BaseApi extends BaseController
         return strtolower(trim((string) ($this->param('role', 'peran') ?? '')));
     }
 
+    /**
+     * PERBAIKAN H2 — peran yang DIPERCAYA.
+     *
+     * Sebelumnya `roleParam()` dipakai langsung, artinya pemanggil cukup
+     * mengirim `"role":"dosen"` untuk memperoleh peta modul dosen.
+     *
+     * Urutan sumber sekarang:
+     *  1. Kebijakan scope 'all'  → boleh memakai `role` dari request
+     *     (klien super-admin yang memang dipercaya menyatakan peran).
+     *  2. subject_type kebijakan → peran mengikuti tipe subjek terverifikasi.
+     *  3. role_scope kebijakan   → peran yang ditetapkan admin untuk klien ini.
+     *  4. '' (kosong)            → tidak ada peran, bukan 'admin'.
+     */
+    protected function resolvedRole(): string
+    {
+        $policy = \App\Libraries\Auth\PolicyGuard::policy();
+
+        if ($policy === null) {
+            // Konteks internal (bukan request API): hormati parameter seperti dulu.
+            return \App\Libraries\Academic\ModuleRegistry::normalizeRole($this->roleParam());
+        }
+
+        if ($policy->scope === \App\Libraries\Auth\AccessPolicy::SCOPE_ALL) {
+            $fromRequest = $this->roleParam();
+
+            return $fromRequest === ''
+                ? ''
+                : \App\Libraries\Academic\ModuleRegistry::normalizeRole($fromRequest);
+        }
+
+        if ($policy->subjectType !== null && $policy->subjectType !== '') {
+            return \App\Libraries\Academic\ModuleRegistry::normalizeRole($policy->subjectType);
+        }
+
+        if ($policy->roleScope !== '') {
+            return \App\Libraries\Academic\ModuleRegistry::normalizeRole($policy->roleScope);
+        }
+
+        return '';
+    }
+
+    /**
+     * Subject terverifikasi untuk request ini (NIM/NIK/NIDN).
+     * Sumbernya body bertanda tangan HMAC — bukan query string, dan bukan
+     * teks pertanyaan. `null` bila kebijakan tidak mengikat subjek.
+     */
+    protected function verifiedSubject(): ?string
+    {
+        return \App\Libraries\Auth\PolicyGuard::subjectId();
+    }
+
     protected function moduleParam(): string
     {
         return strtolower(trim((string) ($this->param('module', 'modul') ?? '')));

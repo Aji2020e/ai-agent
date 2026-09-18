@@ -12,8 +12,11 @@ class ApiLogModel extends Model
     protected $returnType       = 'array';
     protected $useSoftDeletes   = false;
     protected $protectFields    = true;
+    // PERBAIKAN BUG LAMA: 'created_at' diisi di log() tapi tidak terdaftar di
+    // sini, sehingga $protectFields membuangnya dan SELURUH baris api_logs
+    // selama ini bertimestamp NULL.
     protected $allowedFields    = [
-        'client_id', 'module', 'endpoint', 'tokens_used', 'status',
+        'client_id', 'module', 'endpoint', 'tokens_used', 'status', 'created_at',
     ];
     protected $useTimestamps = false;
     protected $createdField  = 'created_at';

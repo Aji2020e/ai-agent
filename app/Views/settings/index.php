@@ -148,6 +148,78 @@
                         </div>
                     </div>
 
+                    <hr class="my-4">
+
+                    <h6 class="fw-bold"><i class="bi bi-sliders me-2"></i>Kualitas &amp; Kecepatan Jawaban</h6>
+                    <p class="text-secondary small">
+                        Menentukan seberapa patuh AI pada data dan seberapa panjang jawabannya.
+                        Untuk aplikasi yang melaporkan data akademik, biarkan <strong>temperature rendah</strong> —
+                        angka tinggi membuat model berkreasi, dan itu artinya mengarang.
+                    </p>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Preset cepat</label>
+                        <div class="btn-group w-100" role="group">
+                            <button type="button" class="btn btn-outline-secondary" data-preset="faktual"
+                                    data-temp="0.1" data-tokens="768">Faktual / Akademik</button>
+                            <button type="button" class="btn btn-outline-secondary" data-preset="seimbang"
+                                    data-temp="0.4" data-tokens="1024">Seimbang</button>
+                            <button type="button" class="btn btn-outline-secondary" data-preset="kreatif"
+                                    data-temp="0.8" data-tokens="2048">Kreatif / Menulis</button>
+                            <button type="button" class="btn btn-outline-secondary" data-preset="coding"
+                                    data-temp="0.2" data-tokens="2048">Coding</button>
+                        </div>
+                        <div class="form-text">Tombol preset hanya mengisi angka di bawah — masih bisa diubah manual sebelum disimpan.</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold" for="aiTemperature">Temperature</label>
+                            <input type="number" step="0.1" min="0" max="2" name="ai_temperature" id="aiTemperature"
+                                   class="form-control" value="<?= esc($ai_temperature) ?>">
+                            <div class="form-text">0 = sangat pasti, 2 = sangat acak. Disarankan 0.1&ndash;0.3 untuk data.</div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold" for="aiTopP">Top-p</label>
+                            <input type="number" step="0.05" min="0.1" max="1" name="ai_top_p" id="aiTopP"
+                                   class="form-control" value="<?= esc($ai_top_p) ?>">
+                            <div class="form-text">Batasi keragaman kata. 0.9 umum dipakai.</div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold" for="aiMaxTokens">Maks token jawaban</label>
+                            <input type="number" min="64" max="8192" step="64" name="ai_max_tokens" id="aiMaxTokens"
+                                   class="form-control" value="<?= esc($ai_max_tokens) ?>">
+                            <div class="form-text">Membatasi panjang jawaban &rarr; lebih cepat dan lebih hemat.</div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold" for="aiMaxContext">Anggaran konteks (token)</label>
+                            <input type="number" min="500" max="100000" step="500" name="ai_max_context_tokens" id="aiMaxContext"
+                                   class="form-control" value="<?= esc($ai_max_context_tokens) ?>">
+                            <div class="form-text">Total system prompt + riwayat. Bila terlampaui, pesan tertua dipangkas &mdash; system prompt selalu dipertahankan.</div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-semibold" for="aiHistoryLimit">Maks pesan riwayat</label>
+                            <input type="number" min="2" max="200" name="ai_history_limit" id="aiHistoryLimit"
+                                   class="form-control" value="<?= esc($ai_history_limit) ?>">
+                            <div class="form-text">Jumlah pesan terakhir yang diambil dari database.</div>
+                        </div>
+                        <div class="col-md-2 mb-3">
+                            <label class="form-label fw-semibold" for="aiNumCtx">num_ctx</label>
+                            <input type="number" min="2048" max="131072" step="1024" name="ai_num_ctx" id="aiNumCtx"
+                                   class="form-control" value="<?= esc($ai_num_ctx) ?>">
+                            <div class="form-text">Khusus Ollama.</div>
+                        </div>
+                        <div class="col-md-2 mb-3">
+                            <label class="form-label fw-semibold" for="aiKeepAlive">keep_alive</label>
+                            <input type="text" name="ai_keep_alive" id="aiKeepAlive"
+                                   class="form-control" value="<?= esc($ai_keep_alive) ?>" placeholder="30m">
+                            <div class="form-text">Khusus Ollama: mis. 30m, 1h.</div>
+                        </div>
+                    </div>
+
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-ai"><i class="bi bi-save me-2"></i>Simpan</button>
                         <button type="button" class="btn btn-outline-secondary" id="btnTest"><i class="bi bi-lightning-charge me-2"></i>Tes Koneksi</button>
@@ -227,6 +299,17 @@ document.getElementById('btnTest').addEventListener('click', async function () {
     }
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Tes Koneksi';
+});
+
+// ---- Preset tuning: isi angka, tidak langsung menyimpan ----
+document.querySelectorAll('[data-preset]').forEach(btn => {
+    btn.addEventListener('click', function () {
+        document.getElementById('aiTemperature').value = this.dataset.temp;
+        document.getElementById('aiMaxTokens').value   = this.dataset.tokens;
+
+        document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+    });
 });
 </script>
 <?= $this->endSection() ?>

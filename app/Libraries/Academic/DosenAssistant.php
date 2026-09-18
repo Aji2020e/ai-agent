@@ -35,11 +35,11 @@ class DosenAssistant extends AssistantModule
         $nik      = static::requireParam($params, 'nik', 30);
         $question = static::requireQuestion($params);
 
-        $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], [$map['id_col'] => $nik], 1, $map['id_col'] . ' ASC', [$map['id_col']]);
+        $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], [$map['id_col'] => $nik], 1, $map['id_col'] . ' ASC', [$map['id_col']], static::slug());
 
         if ($rows === []) {
             // Coba cari by KODE juga
-            $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], ['KODE' => $nik], 1, 'KODE ASC', ['KODE']);
+            $rows = AcademicDb::select($map['profile_table'], $map['profile_cols'], ['KODE' => $nik], 1, 'KODE ASC', ['KODE'], static::slug());
         }
 
         if ($rows === []) {

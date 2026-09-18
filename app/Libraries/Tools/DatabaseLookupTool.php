@@ -19,10 +19,16 @@ class DatabaseLookupTool implements ToolInterface
     public function run(array $params): ToolResult
     {
         $intent = $params['intent'] ?? 'biodata';
-        $npm = $params['identifier'] ?? null;
+
+        // ---- PERBAIKAN H4a ----
+        // Identifier TIDAK boleh berasal dari params/teks AI bila kebijakan
+        // membatasi ke diri sendiri. Sebelum ini, AI bisa memanggil tool dengan
+        // NPM siapa pun dan menembus seluruh lapisan otorisasi controller.
+        $requested = $params['identifier'] ?? null;
+        $npm       = \App\Libraries\Auth\PolicyGuard::forcedSubject('mahasiswa', $requested);
 
         if (empty($npm)) {
-            return new ToolResult(false, null, 'NPM tidak ditemukan.');
+            return new ToolResult(false, null, 'Identifier tidak tersedia untuk klien ini.');
         }
 
         $model = new AcademicModel();

@@ -17,7 +17,8 @@ class Discover extends BaseApi
     public function modules()
     {
         $client = $this->client();
-        $peran  = $this->param('role', 'peran') ?? '';
+        // PERBAIKAN H2: peran berasal dari kebijakan klien, bukan dari request.
+        $peran  = $this->resolvedRole();
 
         $list = [];
         foreach (ModuleRegistry::accessible($client, $peran) as $slug => $info) {
@@ -49,9 +50,13 @@ class Discover extends BaseApi
     public function ask()
     {
         $client   = $this->client();
-        $peran    = $this->roleParam();
+        // PERBAIKAN H2: peran dari kebijakan, bukan deklarasi pemanggil.
+        $peran    = $this->resolvedRole();
         $forced   = $this->moduleParam();
-        $id       = $this->idParam();
+        // PERBAIKAN H1: untuk klien ber-scope 'self', subject terverifikasi
+        // menimpa ID apa pun yang dikirim. Klien scope unit/role/all tetap
+        // boleh menyebut ID, dan pembatasannya diterapkan di lapisan data.
+        $id       = $this->verifiedSubject() ?? $this->idParam();
         $question = $this->reasonParam();
 
         if ($question === null || mb_strlen($question) > 2000) {
@@ -261,7 +266,9 @@ class Discover extends BaseApi
             $model = AiClient::clientModel($client, $model);
             $opt['timeout'] = 120;
             $reply = AiClient::chat($provider, $url, $model, \App\Libraries\WebSearch::withWebContext([
-                ['role' => 'system', 'content' => 'Kamu asisten kampus yang ramah. Ini obrolan umum, jadi jawab cepat, jelas, santai, maksimal 120 kata. Jangan membuka/menebak data akademik internal.'],
+                ['role' => 'system', 'content' => \App\Libraries\PromptBuilder::general(
+                    'asisten kampus yang ramah. Ini obrolan umum: jawab cepat, jelas, santai, maksimal 120 kata, dan jangan membuka atau menebak data akademik internal'
+                )],
                 ['role' => 'user', 'content' => $question],
             ], $question), $opt);
         } catch (\RuntimeException $e) {
@@ -451,7 +458,7 @@ class Discover extends BaseApi
         foreach ($prof as $slug => [$t, $c]) {
             foreach ($parsed['ids'] as $tok) {
                 try {
-                    $rows = \App\Libraries\AcademicDb::select($t, [$c], [$c => $tok], 1, $c . ' ASC', [$c]);
+                    $rows = \App\Libraries\AcademicDb::select($t, [$c], [$c => $tok], 1, $c . ' ASC', [$c], $slug);
                     if ($rows !== []) {
                         $hits[] = [$slug, trim((string) $rows[0][$c])];
                         break;
@@ -564,7 +571,7 @@ class Discover extends BaseApi
                 continue;
             }
             try {
-                $rows = \App\Libraries\AcademicDb::select($t, [$c], [$c => $id], 1, $c . ' ASC', [$c]);
+                $rows = \App\Libraries\AcademicDb::select($t, [$c], [$c => $id], 1, $c . ' ASC', [$c], $slug);
                 if ($rows !== []) {
                     $hits[] = $slug;
                 }

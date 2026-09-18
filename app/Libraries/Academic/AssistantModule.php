@@ -138,6 +138,11 @@ abstract class AssistantModule
         $model = AiClient::clientModel(\App\Libraries\ApiAuth::client(), $model);
         $opt['timeout']                 = $timeout;
 
+        // Suntik aturan grounding ke setiap panggilan, dari mana pun systemRole
+        // berasal. Sebelumnya tiap asisten menulis aturannya sendiri-sendiri dan
+        // sebagian besar tidak melarang pengarangan angka/tanggal secara eksplisit.
+        $systemRole .= "\n\n" . \App\Libraries\PromptBuilder::groundingRules(true, true);
+
         $messages = \App\Libraries\WebSearch::withWebContext([
             ['role' => 'system', 'content' => $systemRole],
             ['role' => 'user', 'content' => $userText],
@@ -339,7 +344,7 @@ abstract class AssistantModule
                 if ($fc !== '' && preg_match('/^[A-Za-z0-9_]+$/', $fc) && in_array($fc, $real, true) && mb_strlen($fv) <= 100) {
                     $where = [$fc => $fv];
                 }
-                $rows = AcademicDb::select($table, $cols, $where, 30, $cols[0] . ' ASC');
+                $rows = AcademicDb::select($table, $cols, $where, 30, $cols[0] . ' ASC', [], static::slug());
                 $out[] = "Tabel {$table}: " . json_encode($rows, JSON_UNESCAPED_UNICODE);
             } catch (\Throwable) {
             }
