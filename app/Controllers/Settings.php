@@ -155,6 +155,62 @@ class Settings extends BaseController
         return redirect()->back()->with('success', 'Pengaturan AI berhasil disimpan.');
     }
 
+    /** Hapus satu API key dari bucket Base URL tertentu. Dipakai via AJAX. */
+    public function removeKey()
+    {
+        $settings = new SettingModel();
+        $provider = trim((string) $this->request->getPost('provider'));
+        $prefix   = trim((string) $this->request->getPost('key_prefix')); // 8 char prefix
+        $baseUrl  = rtrim(trim((string) $this->request->getPost('base_url'))
+            ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
+
+        if ($provider !== 'openai' || $prefix === '') {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Param tidak valid.',
+                'csrf'    => csrf_hash(),
+            ]);
+        }
+
+        $keyMap = $settings->getSecretMap('openai_key_map');
+        $bucket = $keyMap[$baseUrl] ?? [];
+
+        if (empty($bucket)) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Tidak ada key untuk provider ini.',
+                'csrf'    => csrf_hash(),
+            ]);
+        }
+
+        $found = false;
+        foreach ($bucket as $i => $k) {
+            if (str_starts_with($k, $prefix)) {
+                unset($bucket[$i]);
+                $found = true;
+                break;
+            }
+        }
+
+        if (! $found) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Key dengan prefix "' . substr($prefix, 0, 8) . '" tidak ditemukan.',
+                'csrf'    => csrf_hash(),
+            ]);
+        }
+
+        // Normalisasi & simpan kembali (tanpa index gap kosong)
+        $keyMap[$baseUrl] = array_values(array_filter($bucket));
+        $settings->setSecretMap('openai_key_map', $keyMap);
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => 'API key berhasil dihapus.',
+            'csrf'    => csrf_hash(),
+        ]);
+    }
+
     /**
      * Simpan parameter tuning dengan pembatasan rentang.
      *

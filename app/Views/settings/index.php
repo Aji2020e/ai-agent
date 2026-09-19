@@ -119,25 +119,28 @@
                                         <div class="input-group mb-2">
                                             <span class="input-group-text"><i class="bi bi-key"></i></span>
                                             <input type="password" name="openai_keys[]" class="form-control" placeholder="sk-..." autocomplete="new-password">
-                                            <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
+                                            <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus"><i class="bi bi-trash"></i></button>
                                         </div>
                                         <?php else: ?>
-                                            <?php foreach ($openai_keys as $k): ?>
-                                            <div class="input-group mb-2" data-key="<?= esc(substr($k, 0, 8)) ?>">
+                                            <?php foreach ($openai_keys as $k):
+                                                $prefix = substr($k, 0, 8);
+                                            ?>
+                                            <div class="input-group mb-2" data-key="<?= esc($prefix) ?>">
                                                 <span class="input-group-text"><i class="bi bi-key"></i></span>
                                                 <input type="password" name="openai_keys[]" class="form-control" value="<?= esc($k) ?>" placeholder="sk-..." autocomplete="new-password">
-                                                <span class="input-group-text test-status" style="display:none">
+                                                <span class="test-status input-group-text" style="display:none;width:140px;min-width:140px">
                                                     <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                                                    <span>Menguji...</span>
+                                                    <small>Menguji...</small>
                                                 </span>
-                                                <button type="button" class="btn btn-outline-secondary btn-test-single-key"><i class="bi bi-lightning"></i></button>
-                                                <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
+                                                <button type="button" class="btn btn-outline-secondary btn-test-single-key" title="Tes koneksi per key"><i class="bi bi-lightning"></i></button>
+                                                <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus dari database"><?= esc($prefix) ?></button>
                                             </div>
                                             <?php endforeach; ?>
                                         <?php endif; ?>
                                     </div>
                                     <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="btnAddKey"><i class="bi bi-plus-lg me-1"></i>Tambah API Key</button>
-                                    <div class="form-text">Key untuk <strong id="currentProvider"><?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?></strong>. Simpan banyak key untuk rotasi/failover. Kosongkan untuk menghapus. Tersimpan terenkripsi di database.</div>
+                                    <div id="keyMsg" class="mt-2" style="display:none"></div>
+                                    <div class="form-text">Key untuk <strong id="currentProvider"><?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?></strong>. Simpan banyak key untuk rotasi/failover. Gunakan tombol hapus untuk menghapus langsung dari database.</div>
                                 </div>
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(Tes Koneksi untuk daftar)</small></label>
@@ -407,20 +410,20 @@ document.addEventListener('click', function(e) {
         const key = input.value.trim();
         const prefix = key.substring(0, 8);
         const statusEl = row.querySelector('.test-status');
-        
+
         if (key === '') {
             alert('Masukkan API key terlebih dahulu.');
             return;
         }
-        
+
         statusEl.style.display = 'flex';
         e.target.disabled = true;
-        
+
         const fd = new FormData();
         fd.append('ai_provider', 'openai');
         fd.append('openai_base', document.getElementById('openaiBase').value);
         fd.append('openai_keys[]', key);
-        
+
         fetch('<?= site_url('admin/settings/test') ?>', { method: 'POST', body: fd })
             .then(res => res.json())
             .then(data => {
@@ -444,7 +447,59 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// ---- Multi API Key untuk provider AI ----
+// ---- Hapus KEY via AJAX (bukan hapus dari form HTML biasa) ----
+document.addEventListener('click', function(e) {
+    if (!e.target.classList.contains('btn-remove-key')) {
+        return;
+    }
+    e.preventDefault();
+    const row     = e.target.closest('.input-group');
+    const prefix  = row.dataset.key || '';
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const csrfName = document.querySelector('meta[name="csrf-name"]')?.content || 'csrf_test_name';
+    const csrfToken = csrfMeta?.content || '';
+    const baseUrl = document.getElementById('openaiBase').value.trim() || 'https://api.openai.com';
+
+    // Disable tombol selama proses
+    e.target.disabled  = true;
+    e.target.innerHTML = '<span class="spinner-border spinner-border-sm spinner-border-sm" style="width:1rem;height:1rem;"></span>';
+
+    const fd = new FormData();
+    fd.append('provider',   'openai');
+    fd.append('base_url',   baseUrl);
+    fd.append('key_prefix', prefix);
+    fd.append(csrfName,     csrfToken);
+
+    fetch('<?= site_url('admin/settings/remove-key') ?>', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+            if (data.csrf) csrfMeta?.setAttribute('content', data.csrf);
+            if (data.success) {
+                // Hapus baris dari DOM setelah server konfirmasi
+                row.remove();
+                showMsg('success', 'API key berhasil dihapus dari database.');
+            } else {
+                showMsg('danger', 'Gagal menghapus: ' + (data.message || 'error'));
+                e.target.innerHTML = '<i class="bi bi-trash"></i>';
+                e.target.disabled  = false;
+            }
+        })
+        .catch(err => {
+            showMsg('danger', 'Error jaringan: ' + err.message);
+            e.target.innerHTML = '<i class="bi bi-trash"></i>';
+            e.target.disabled  = false;
+        });
+});
+
+function showMsg(type, text) {
+    const el = document.getElementById('keyMsg');
+    el.className = `alert alert-${type} mb-0 py-1`;
+    el.style.display = 'block';
+    el.textContent = text;
+    setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+// ---- Tambah API Key baru ke form ----
 document.getElementById('btnAddKey')?.addEventListener('click', function () {
     const list = document.getElementById('openaiKeyList');
     const row = document.createElement('div');
@@ -452,25 +507,11 @@ document.getElementById('btnAddKey')?.addEventListener('click', function () {
     row.innerHTML = `
         <span class="input-group-text"><i class="bi bi-key"></i></span>
         <input type="password" name="openai_keys[]" class="form-control" placeholder="sk-..." autocomplete="new-password">
-        <span class="input-group-text test-status" style="display:none">
-            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-            <span>Menguji...</span>
-        </span>
-        <button type="button" class="btn btn-outline-secondary btn-test-single-key"><i class="bi bi-lightning"></i></button>
-        <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
+        <button type="button" class="btn btn-outline-secondary btn-test-single-key" title="Tes koneksi per key"><i class="bi bi-lightning"></i></button>
+        <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus"><i class="bi bi-trash"></i></button>
     `;
     list.appendChild(row);
-    bindRemoveKeys();
 });
-
-function bindRemoveKeys() {
-    document.querySelectorAll('.btn-remove-key').forEach(btn => {
-        btn.onclick = function () {
-            this.closest('.input-group').remove();
-        };
-    });
-}
-bindRemoveKeys();
 
 // ---- Preset tuning: isi angka, tidak langsung menyimpan ----
 document.querySelectorAll('[data-preset]').forEach(btn => {
