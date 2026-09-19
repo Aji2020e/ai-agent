@@ -161,6 +161,30 @@ class SettingModel extends Model
         return $this->setSecret($key, json_encode($filtered, JSON_UNESCAPED_SLASHES));
     }
 
+    /** Ambil daftar secret (array) yang disimpan sebagai JSON terenkripsi. */
+    public function getSecretList(string $key): array
+    {
+        $raw = $this->getSecret($key, '[]');
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+
+        try {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return array_values(
+                    array_filter(
+                        array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', $decoded),
+                        static fn ($v) => $v !== ''
+                    )
+                );
+            }
+        } catch (\Throwable) {
+        }
+
+        return [];
+    }
+
     /**
      * Ambil peta kunci per identifier (base_url → list of keys).
      * Struktur tersimpan:
