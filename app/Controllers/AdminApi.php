@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Libraries\AcademicDb;
 use App\Models\ApiClientModel;
 use App\Models\ApiDocModel;
+use App\Models\ApiKeyModel;
 use App\Models\ApiLogModel;
 use App\Models\SettingModel;
 use CodeIgniter\HTTP\Files\UploadedFile;
@@ -21,6 +22,12 @@ class AdminApi extends BaseController
         $dict    = (new \App\Models\ApiDictionaryModel())->orderBy('module', 'ASC')->orderBy('id', 'ASC')->findAll();
         $logs    = (new ApiLogModel())->recent(30);
         $akad    = AcademicDb::config(true);
+
+        // Ambil semua key per client
+        $keys = [];
+        foreach ((new ApiKeyModel())->findAll() as $k) {
+            $keys[(int) $k['client_id']][] = $k;
+        }
 
         // Kebijakan otorisasi per klien + jejak pelanggaran terbaru
         $policies   = $this->policiesOrEmpty();
@@ -39,6 +46,7 @@ class AdminApi extends BaseController
             'logs'       => $logs,
             'akad'       => $akad,
             'akadStatus' => $akadStatus,
+            'keys'       => $keys,
             'policies'       => $policies,
             'violations'     => $violations,
             'violationTally' => $violationTally,
@@ -240,10 +248,12 @@ class AdminApi extends BaseController
 
         $model = new ApiClientModel();
         $made  = $model->createClient($name, $scope, $skillsScope);
-        $model->update($made['id'], [
+        $model->update($made['id'], ['model' => $cm !== '' ? $cm : null]);
+
+        // Update key pertama dengan expiry & IP allowlist (sekarang per-key)
+        (new ApiKeyModel())->update($made['key_id'], [
             'expires_at'   => $days > 0 ? date('Y-m-d H:i:s', time() + $days * 86400) : null,
             'ip_allowlist' => $ips !== '' ? preg_replace('/[^\d\.\s,\/]/', '', $ips) : null,
-            'model'        => $cm !== '' ? $cm : null,
         ]);
 
         // Kebijakan awal: aman tapi belum membatasi baris. Admin WAJIB
@@ -312,6 +322,51 @@ class AdminApi extends BaseController
         }
 
         return redirect()->back()->with('success', 'Status klien diubah.');
+    }
+
+    /** Tambah API key baru untuk client yang sudah ada. */
+    public function addKey(int $clientId)
+    {
+        $client = (new ApiClientModel())->find($clientId);
+
+        if (! $client) {
+            return redirect()->back()->with('error', 'Klien tidak ditemukan.');
+        }
+
+        $days = (int) $this->request->getPost('expiry_days');
+        $ips  = trim((string) $this->request->getPost('ips'));
+
+        $made = (new ApiKeyModel())->createKey($clientId, [
+            'expires_at'   => $days > 0 ? date('Y-m-d H:i:s', time() + $days * 86400) : null,
+            'ip_allowlist' => $ips !== '' ? preg_replace('/[^\d\.\s,\/]/', '', $ips) : null,
+        ]);
+
+        return redirect()->to(site_url('admin/api'))
+            ->with('success', 'API key baru dibuat untuk ' . esc($client['name']) . '. Salin key sekarang — hanya tampil sekali!')
+            ->with('newKey', $made['key']);
+    }
+
+    /** Aktifkan/nonaktifkan salah satu key. */
+    public function toggleKey(int $id)
+    {
+        (new ApiKeyModel())->toggle($id);
+
+        return redirect()->back()->with('success', 'Status key diubah.');
+    }
+
+    /** Hapus (revoke) salah satu key. */
+    public function revokeKey(int $id)
+    {
+        $model = new ApiKeyModel();
+        $key   = $model->find($id);
+
+        if (! $key) {
+            return redirect()->back()->with('error', 'Key tidak ditemukan.');
+        }
+
+        $model->delete($id);
+
+        return redirect()->back()->with('success', 'API key dicabut.');
     }
 
     /** Bersihkan daftar skill: array valid atau []. */

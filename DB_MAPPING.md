@@ -873,3 +873,58 @@ php spark app:test-skill-router dosen <NIK>
 php spark app:test-skill-router staff
 ```
 
+---
+
+## Multi API Key per Client
+
+Setiap klien API (`api_clients`) sekarang bisa memiliki banyak API key di tabel terpisah `api_keys`. Key bisa ditambah, dinonaktifkan, atau dicabut satu per satu tanpa memengaruhi key lain.
+
+### Skema Baru
+
+- `api_clients` — data klien: nama, modul, skill, model, HMAC.
+- `api_keys` — banyak baris per `client_id` dengan kolom:
+  - `api_key_hash`
+  - `key_prefix`
+  - `expires_at`
+  - `ip_allowlist`
+  - `is_active`
+  - `last_used`
+
+### Migrasi
+
+Migration `CreateApiKeysTable` membuat tabel `api_keys` dan memindahkan key lama dari `api_clients`. Key lama tetap berfungsi tanpa perubahan di sisi consumer.
+
+### Model
+
+- `ApiClientModel` — mengelola data klien, otomatis membuat key pertama saat `createClient()`.
+- `ApiKeyModel` — mengelola key:
+  - `createKey(clientId, options)`
+  - `findByKey(plainKey)` — autentikasi lookup
+  - `forClient(clientId)` — daftar key per klien
+  - `toggle(id)`, `revoke(id)`
+
+### Autentikasi
+
+`ApiKeyFilter` sekarang mencocokkan header `X-API-Key` / `Authorization: Bearer` ke tabel `api_keys`:
+
+1. Lookup key → gabung data `api_clients`.
+2. Cek `api_keys.is_active` dan `api_clients.is_active`.
+3. Cek expiry & IP allowlist per key.
+4. Rate limit per key (`apikey_<key_id>`).
+5. Update `last_used` di `api_keys`.
+
+### Admin UI
+
+Di `/admin/api`, setiap baris klien sekarang bisa di-expand untuk menampilkan daftar key:
+
+- Tambah key baru (dengan expiry & IP allowlist).
+- Toggle aktif/nonaktif per key.
+- Revoke (hapus) per key.
+- HMAC, toggle, dan hapus klien tetap di level klien.
+
+### Perintah Test
+
+```bash
+php spark app:test-api-keys
+```
+

@@ -4,7 +4,7 @@ namespace App\Filters;
 
 use App\Libraries\ApiAuth;
 use App\Libraries\Auth\PolicyGuard;
-use App\Models\ApiClientModel;
+use App\Models\ApiKeyModel;
 use CodeIgniter\Filters\FilterInterface;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
@@ -29,7 +29,7 @@ class ApiKeyFilter implements FilterInterface
             $key = substr($request->getHeaderLine('Authorization'), 7);
         }
 
-        $model  = new ApiClientModel();
+        $model  = new ApiKeyModel();
         $client = $model->findByKey(trim($key));
 
         if ($client === null || empty($client['is_active'])) {
@@ -52,11 +52,11 @@ class ApiKeyFilter implements FilterInterface
         }
 
         // Rate limit per key
-        if (! $throttler->check('apikey_' . $client['id'], 120, 60)) {
+        if (! $throttler->check('apikey_' . $client['key_id'], 120, 60)) {
             return $this->deny(429, 'Batas 120 request/menit terlampaui.', (int) $throttler->getTokenTime());
         }
 
-        // HMAC bila diwajibkan: X-Timestamp + X-Signature = HMAC_SHA256(secret, ts + '.' + rawBody)
+        // HMAC opsional (anti replay)
         if (! empty($client['require_hmac'])) {
             $err = $this->verifyHmac($request, (string) $client['hmac_secret']);
             if ($err !== null) {
@@ -64,7 +64,7 @@ class ApiKeyFilter implements FilterInterface
             }
         }
 
-        $model->update($client['id'], ['last_used' => date('Y-m-d H:i:s')]);
+        $model->touch((int) $client['key_id']);
         ApiAuth::setClient($client);
 
         // Pasang kebijakan otorisasi. Bila subject tidak sah, kembalikan

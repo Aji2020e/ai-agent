@@ -13,37 +13,25 @@ class ApiClientModel extends Model
     protected $useSoftDeletes   = false;
     protected $protectFields    = true;
     protected $allowedFields    = [
-        'name', 'modules', 'skills', 'model', 'api_key_hash', 'key_prefix', 'ip_allowlist',
-        'expires_at', 'hmac_secret', 'require_hmac', 'is_active', 'last_used',
+        'name', 'modules', 'skills', 'model',
+        'require_hmac', 'hmac_secret', 'is_active',
     ];
     protected $useTimestamps = true;
     protected $createdField  = 'created_at';
     protected $updatedField  = 'updated_at';
 
-    /** Buat klien baru. Return ['id'=>..., 'key'=> plaintext (tampil sekali!)]. */
+    /** Buat klien baru dan key pertama-nya. Return ['id'=>..., 'key'=> plaintext]. */
     public function createClient(string $name, string $modules = '*', string $skills = '*'): array
     {
-        $key = bin2hex(random_bytes(32));
-
         $id = $this->insert([
-            'name'         => $name,
-            'modules'      => $modules,
-            'skills'       => $skills,
-            'api_key_hash' => hash('sha256', $key),
-            'key_prefix'   => substr($key, 0, 8),
-            'is_active'    => 1,
+            'name'    => $name,
+            'modules' => $modules,
+            'skills'  => $skills,
         ]);
 
-        return ['id' => $id, 'key' => $key];
-    }
+        $made = (new ApiKeyModel())->createKey((int) $id);
 
-    public function findByKey(string $key): ?array
-    {
-        if ($key === '') {
-            return null;
-        }
-
-        return $this->where('api_key_hash', hash('sha256', $key))->first();
+        return ['id' => $id, 'key_id' => $made['id'], 'key' => $made['key']];
     }
 
     public function allowsModule(array $client, string $module): bool

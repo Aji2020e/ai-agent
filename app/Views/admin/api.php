@@ -66,7 +66,7 @@ $violationTally = $violationTally ?? [];
                         <tbody>
                         <?php foreach ($clients as $c): ?>
                             <tr>
-                                <td><strong><?= esc($c['name']) ?></strong><br><small class="text-secondary"><code><?= esc($c['key_prefix'] ?? '-') ?></code> · dipakai: <?= $c['last_used'] ?? '-' ?></small></td>
+                                <td><strong><?= esc($c['name']) ?></strong></td>
                                 <td><code><?= esc($c['modules']) ?></code></td>
                                 <td><code><?= esc($c['skills'] ?? '*') ?></code><br><small class="text-secondary">model: <code><?= esc($c['model'] ?? '') !== '' ? $c['model'] : 'default' ?></code></small>
                                     <form action="<?= site_url('admin/api/clients/model/' . $c['id']) ?>" method="post" class="d-flex gap-1 mt-1"><?= csrf_field() ?>
@@ -109,9 +109,7 @@ $violationTally = $violationTally ?? [];
                                     </button>
                                 </td>
                                 <td><small>
-                                    <?= ! empty($c['expires_at']) ? 'exp: ' . esc($c['expires_at']) . '<br>' : '' ?>
-                                    <?= ! empty($c['ip_allowlist']) ? 'ip: <code>' . esc($c['ip_allowlist']) . '</code><br>' : '' ?>
-                                    <?= ! empty($c['require_hmac']) ? '<span class="badge text-bg-success">HMAC</span>' : '' ?>
+                                    <?= ! empty($c['require_hmac']) ? '<span class="badge text-bg-success">HMAC</span>' : '<span class="badge text-bg-secondary">-</span>' ?>
                                 </small></td>
                                 <td><span class="badge text-bg-<?= $c['is_active'] ? 'success' : 'secondary' ?>"><?= $c['is_active'] ? 'Aktif' : 'Mati' ?></span></td>
                                 <td class="text-nowrap">
@@ -121,6 +119,46 @@ $violationTally = $violationTally ?? [];
                                         <button class="btn btn-sm btn-warning" title="Aktif/mati"><i class="bi bi-power"></i></button></form>
                                     <form action="<?= site_url('admin/api/clients/delete/' . $c['id']) ?>" method="post" class="d-inline" onsubmit="return confirm('Hapus klien?')"><?= csrf_field() ?>
                                         <button class="btn btn-sm btn-danger" title="Hapus"><i class="bi bi-trash"></i></button></form>
+                                </td>
+                            </tr>
+                            <tr class="table-light">
+                                <td colspan="7" class="p-0">
+                                    <div class="p-2">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                            <strong class="small"><i class="bi bi-key me-1"></i>API Keys</strong>
+                                            <form action="<?= site_url('admin/api/clients/key/' . $c['id']) ?>" method="post" class="d-flex flex-wrap gap-1">
+                                                <?= csrf_field() ?>
+                                                <input type="number" name="expiry_days" class="form-control form-control-sm" placeholder="Hari" style="width:70px" title="Masa berlaku (hari), kosong = selamanya" min="1">
+                                                <input type="text" name="ips" class="form-control form-control-sm" placeholder="IP allowlist" style="width:140px" title="Kosong = semua IP">
+                                                <button class="btn btn-sm btn-success"><i class="bi bi-plus me-1"></i>Key</button>
+                                            </form>
+                                        </div>
+                                        <div class="table-responsive" style="overflow-x: auto;">
+                                            <table class="table table-sm table-bordered mb-0" style="min-width: 700px;">
+                                                <thead class="table-light"><tr><th>Prefix</th><th>Status</th><th>Exp</th><th>IP Allowlist</th><th>Last used</th><th>Aksi</th></tr></thead>
+                                                <tbody>
+                                                <?php foreach (($keys[$c['id']] ?? []) as $k): ?>
+                                                    <tr>
+                                                        <td><code><?= esc($k['key_prefix']) ?></code></td>
+                                                        <td><span class="badge text-bg-<?= $k['is_active'] ? 'success' : 'secondary' ?>"><?= $k['is_active'] ? 'Aktif' : 'Mati' ?></span></td>
+                                                        <td><small><?= esc($k['expires_at'] ?? '-') ?></small></td>
+                                                        <td><code><?= esc($k['ip_allowlist'] ?? '-') ?></code></td>
+                                                        <td><small><?= $k['last_used'] ?? '-' ?></small></td>
+                                                        <td class="text-nowrap">
+                                                            <form action="<?= site_url('admin/api/clients/key/toggle/' . $k['id']) ?>" method="post" class="d-inline"><?= csrf_field() ?>
+                                                                <button class="btn btn-sm btn-warning" title="Aktif/mati"><i class="bi bi-power"></i></button></form>
+                                                            <form action="<?= site_url('admin/api/clients/key/revoke/' . $k['id']) ?>" method="post" class="d-inline" onsubmit="return confirm('Cabut key ini?')"><?= csrf_field() ?>
+                                                                <button class="btn btn-sm btn-danger" title="Cabut"><i class="bi bi-trash"></i></button></form>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                                <?php if (empty($keys[$c['id']])): ?>
+                                                    <tr><td colspan="6" class="text-center text-secondary">Belum ada key.</td></tr>
+                                                <?php endif; ?>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

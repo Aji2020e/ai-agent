@@ -64,6 +64,9 @@ $routes->group('admin', ['filter' => 'admin'], static function ($routes) {
     $routes->post('api/clients/model/(:num)', 'AdminApi::modelClient/$1');
     $routes->get('api/models', 'AdminApi::models');
     $routes->post('api/clients/delete/(:num)', 'AdminApi::deleteClient/$1');
+    $routes->post('api/clients/key/(:num)', 'AdminApi::addKey/$1');
+    $routes->post('api/clients/key/toggle/(:num)', 'AdminApi::toggleKey/$1');
+    $routes->post('api/clients/key/revoke/(:num)', 'AdminApi::revokeKey/$1');
     $routes->post('api/akademik', 'AdminApi::saveAkademik');
     $routes->post('api/akademik/test', 'AdminApi::testAkademik');
     $routes->post('api/docs', 'AdminApi::saveDoc');
