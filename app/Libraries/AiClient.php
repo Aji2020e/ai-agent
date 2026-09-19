@@ -24,11 +24,21 @@ class AiClient
         $provider = $s->getGlobal('ai_provider', 'ollama') ?: 'ollama';
 
         if ($provider === 'openai') {
+            $keys = $s->getSecretList('openai_keys');
+            // backward compatibility: secret lama tetap dipakai bila daftar kosong
+            if ($keys === []) {
+                $old = $s->getSecret('openai_key', '');
+                if ($old !== '') {
+                    $keys = [$old];
+                }
+            }
+
             return ['openai',
                 rtrim($s->getGlobal('openai_base', 'https://api.openai.com') ?: 'https://api.openai.com', '/'),
                 $s->getGlobal('openai_model', 'gpt-4o-mini') ?: 'gpt-4o-mini',
                 [
-                    'apiKey'  => (string) $s->getSecret('openai_key', ''),
+                    'apiKey'  => (string) ($keys[0] ?? ''),
+                    'apiKeys' => $keys,
                     'timeout' => 300,
                 ] + self::sampling($s),
             ];
@@ -140,7 +150,8 @@ class AiClient
         $messages = self::stampTime($messages);
 
         if ($provider === 'openai') {
-            return self::chatOpenAi($baseUrl, $model, $messages, (string) ($opt['apiKey'] ?? ''), (int) ($opt['timeout'] ?? 300), $opt);
+            $keys = ! empty($opt['apiKeys']) && is_array($opt['apiKeys']) ? $opt['apiKeys'] : [($opt['apiKey'] ?? '')];
+            return self::chatOpenAi($baseUrl, $model, $messages, $keys, (int) ($opt['timeout'] ?? 300), $opt);
         }
 
         if ($provider === 'opencode') {
@@ -279,31 +290,49 @@ class AiClient
         return $apiKey !== '' ? ['Authorization' => 'Bearer ' . $apiKey] : [];
     }
 
-    private static function chatOpenAi(string $baseUrl, string $model, array $messages, string $apiKey, int $timeout, array $opt = []): array
+    private static function chatOpenAi(string $baseUrl, string $model, array $messages, array $apiKeys, int $timeout, array $opt = []): array
     {
         $base = self::openAiBase($baseUrl);
-        $data = self::http('POST', $base . '/chat/completions', [
-            'model'    => $model,
-            'messages' => $messages,
-            // PERBAIKAN B3: tanpa parameter ini provider memakai default
-            // temperature 1.0 — sangat tidak cocok untuk laporan data akademik.
-            'temperature'       => (float) ($opt['temperature'] ?? 0.2),
-            'top_p'             => (float) ($opt['top_p'] ?? 0.9),
-            'max_tokens'        => (int) ($opt['max_tokens'] ?? 1024),
-            'frequency_penalty' => 0.1,
-        ], self::bearer($apiKey), $timeout);
+        $keys = array_values(array_filter($apiKeys, static fn ($k) => is_string($k) && $k !== ''));
 
-        $content = $data['choices'][0]['message']['content'] ?? null;
-
-        if (! is_string($content)) {
-            throw new RuntimeException('Provider API: ' . ($data['error']['message'] ?? 'respons tak dikenal.'));
+        if ($keys === []) {
+            throw new RuntimeException('Provider API: API key belum diatur.');
         }
 
-        return [
-            'content'    => $content,
-            'tokens'     => (int) ($data['usage']['total_tokens'] ?? 0),
-            'session_id' => null,
-        ];
+        $lastError = '';
+        foreach ($keys as $key) {
+            try {
+                $data = self::http('POST', $base . '/chat/completions', [
+                    'model'    => $model,
+                    'messages' => $messages,
+                    // PERBAIKAN B3: tanpa parameter ini provider memakai default
+                    // temperature 1.0 — sangat tidak cocok untuk laporan data akademik.
+                    'temperature'       => (float) ($opt['temperature'] ?? 0.2),
+                    'top_p'             => (float) ($opt['top_p'] ?? 0.9),
+                    'max_tokens'        => (int) ($opt['max_tokens'] ?? 1024),
+                    'frequency_penalty' => 0.1,
+                ], self::bearer($key), $timeout);
+
+                $content = $data['choices'][0]['message']['content'] ?? null;
+
+                if (! is_string($content)) {
+                    throw new RuntimeException('Provider API: ' . ($data['error']['message'] ?? 'respons tak dikenal.'));
+                }
+
+                return [
+                    'content'    => $content,
+                    'tokens'     => (int) ($data['usage']['total_tokens'] ?? 0),
+                    'session_id' => null,
+                ];
+            } catch (RuntimeException $e) {
+                $lastError = $e->getMessage();
+                // Lanjut ke key berikutnya bila ada; 401/429/5xx biasanya
+                // berarti key ini habis/rate-limit/error sementara.
+                continue;
+            }
+        }
+
+        throw new RuntimeException('Provider API gagal dengan semua key: ' . $lastError);
     }
 
     // ---------------- OpenCode ----------------

@@ -74,12 +74,26 @@
                             <div class="form-text">Contoh: OpenAI <code>https://api.openai.com</code> · Groq <code>https://api.groq.com/openai</code> · DeepSeek <code>https://api.deepseek.com</code> · OpenRouter <code>https://openrouter.ai/api</code></div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label fw-semibold">API Key <?= $has_openai_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
-                            <div class="input-group">
-                                <span class="input-group-text"><i class="bi bi-key"></i></span>
-                                <input type="password" name="openai_key" class="form-control" placeholder="<?= $has_openai_key ? 'Kosongkan untuk memakai key lama' : 'sk-...' ?>" autocomplete="new-password">
+                            <label class="form-label fw-semibold">API Keys <?= $has_openai_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
+                            <div id="openaiKeyList">
+                                <?php if (empty($openai_keys)): ?>
+                                <div class="input-group mb-2">
+                                    <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                    <input type="password" name="openai_keys[]" class="form-control" placeholder="sk-..." autocomplete="new-password">
+                                    <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
+                                </div>
+                                <?php else: ?>
+                                    <?php foreach ($openai_keys as $k): ?>
+                                    <div class="input-group mb-2">
+                                        <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                        <input type="password" name="openai_keys[]" class="form-control" value="<?= esc($k) ?>" placeholder="sk-..." autocomplete="new-password">
+                                        <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
                             </div>
-                            <div class="form-text">Disimpan terenkripsi di database.</div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="btnAddKey"><i class="bi bi-plus-lg me-1"></i>Tambah API Key</button>
+                            <div class="form-text">Simpan banyak key untuk rotasi/failover. Kosongkan untuk menghapus. Tersimpan terenkripsi di database.</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(Tes Koneksi untuk daftar)</small></label>
@@ -272,8 +286,9 @@ document.getElementById('btnTest').addEventListener('click', async function () {
     fd.append('ai_provider', prov);
     fd.append('ollama_url', document.getElementById('ollamaUrl').value);
     fd.append('openai_base', document.getElementById('openaiBase').value);
-    const ok = document.querySelector('input[name="openai_key"]');
-    if (ok && ok.value) fd.append('openai_key', ok.value);
+    document.querySelectorAll('input[name="openai_keys[]"]').forEach(input => {
+        if (input.value.trim() !== '') fd.append('openai_keys[]', input.value.trim());
+    });
     fd.append('opencode_url', document.getElementById('opencodeUrl').value);
     fd.append('opencode_user', document.getElementById('opencodeUser').value);
     const op = document.getElementById('opencodePass');
@@ -300,6 +315,29 @@ document.getElementById('btnTest').addEventListener('click', async function () {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Tes Koneksi';
 });
+
+// ---- Multi API Key untuk provider AI ----
+document.getElementById('btnAddKey').addEventListener('click', function () {
+    const list = document.getElementById('openaiKeyList');
+    const row = document.createElement('div');
+    row.className = 'input-group mb-2';
+    row.innerHTML = `
+        <span class="input-group-text"><i class="bi bi-key"></i></span>
+        <input type="password" name="openai_keys[]" class="form-control" placeholder="sk-..." autocomplete="new-password">
+        <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
+    `;
+    list.appendChild(row);
+    bindRemoveKeys();
+});
+
+function bindRemoveKeys() {
+    document.querySelectorAll('.btn-remove-key').forEach(btn => {
+        btn.onclick = function () {
+            this.closest('.input-group').remove();
+        };
+    });
+}
+bindRemoveKeys();
 
 // ---- Preset tuning: isi angka, tidak langsung menyimpan ----
 document.querySelectorAll('[data-preset]').forEach(btn => {

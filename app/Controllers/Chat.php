@@ -17,6 +17,7 @@ class Chat extends BaseController
     protected string $aiUrl;
     protected string $aiModel;
     protected string $apiKey = '';
+    protected array $apiKeys = [];
     protected string $ocUser = '';
     protected string $ocPass = '';
 
@@ -35,9 +36,10 @@ class Chat extends BaseController
 
         // Sumber terpusat: AiClient::currentConfig()
         [$this->provider, $this->aiUrl, $this->aiModel, $opt] = AiClient::currentConfig();
-        $this->apiKey = (string) ($opt['apiKey'] ?? '');
-        $this->ocUser = (string) ($opt['username'] ?? '');
-        $this->ocPass = (string) ($opt['password'] ?? '');
+        $this->apiKey  = (string) ($opt['apiKey'] ?? '');
+        $this->apiKeys = (array) ($opt['apiKeys'] ?? []);
+        $this->ocUser  = (string) ($opt['username'] ?? '');
+        $this->ocPass  = (string) ($opt['password'] ?? '');
 
         // Sesi web internal: bukan request API eksternal, tapi tetap diberi
         // kebijakan agar tool berbahaya (file_reader) tidak tersedia bagi AI.
@@ -160,6 +162,7 @@ class Chat extends BaseController
                 $context,
                 [
                     'apiKey'          => $this->apiKey,
+                    'apiKeys'         => $this->apiKeys,
                     'username'        => $this->ocUser,
                     'password'        => $this->ocPass,
                     'opencodeSession' => (string) $this->settings->getGlobal('opencode_session_' . $sessionId, ''),

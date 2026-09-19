@@ -15,6 +15,15 @@ class Settings extends BaseController
     {
         $settings = new SettingModel();
 
+        $openaiKeys = $settings->getSecretList('openai_keys');
+        // backward compatibility: secret lama tetap dipakai bila daftar kosong
+        if ($openaiKeys === []) {
+            $old = $settings->getSecret('openai_key', '');
+            if ($old !== '') {
+                $openaiKeys = [$old];
+            }
+        }
+
         return view('settings/index', [
             'title'          => 'Pengaturan AI',
             'ai_provider'    => $settings->getGlobal('ai_provider', 'ollama') ?: 'ollama',
@@ -22,7 +31,8 @@ class Settings extends BaseController
             'ollama_model'   => $settings->getGlobal('ollama_model', env('app.ollamaModel', 'qwen2.5-coder:32b')),
             'openai_base'    => $settings->getGlobal('openai_base', 'https://api.openai.com'),
             'openai_model'   => $settings->getGlobal('openai_model', 'gpt-4o-mini'),
-            'has_openai_key' => $settings->getSecret('openai_key', '') !== '',
+            'openai_keys'    => $openaiKeys,
+            'has_openai_key' => $openaiKeys !== [],
             'opencode_url'   => $settings->getGlobal('opencode_url', 'http://127.0.0.1:4096'),
             'opencode_user'  => $settings->getGlobal('opencode_user', ''),
             'opencode_model' => $settings->getGlobal('opencode_model', ''),
@@ -77,9 +87,17 @@ class Settings extends BaseController
             }
             $settings->setGlobal('openai_base', rtrim(trim($this->request->getPost('openai_base')), '/'));
             $settings->setGlobal('openai_model', trim($this->request->getPost('openai_model')));
-            $key = trim((string) $this->request->getPost('openai_key'));
-            if ($key !== '') {
-                $settings->setSecret('openai_key', $key);
+
+            $keys = $this->request->getPost('openai_keys');
+            if (is_array($keys)) {
+                $filtered = [];
+                foreach ($keys as $k) {
+                    $k = trim((string) $k);
+                    if ($k !== '') {
+                        $filtered[] = $k;
+                    }
+                }
+                $settings->setSecretList('openai_keys', $filtered);
             }
         } else {
             if (! $this->validate([
@@ -151,9 +169,22 @@ class Settings extends BaseController
             if ($provider === 'openai') {
                 $base = rtrim(trim((string) $this->request->getPost('openai_base'))
                     ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
-                $key = trim((string) $this->request->getPost('openai_key'))
-                    ?: $settings->getSecret('openai_key', '');
-                $result = AiClient::listModels('openai', $base, ['apiKey' => $key]);
+                $firstKey = '';
+                $testKeys = $this->request->getPost('openai_keys');
+                if (is_array($testKeys)) {
+                    foreach ($testKeys as $k) {
+                        $k = trim((string) $k);
+                        if ($k !== '') {
+                            $firstKey = $k;
+                            break;
+                        }
+                    }
+                }
+                if ($firstKey === '') {
+                    $firstKey = $settings->getSecretList('openai_keys')[0]
+                        ?? $settings->getSecret('openai_key', '');
+                }
+                $result = AiClient::listModels('openai', $base, ['apiKey' => $firstKey]);
             } elseif ($provider === 'opencode') {
                 $base = rtrim(trim((string) $this->request->getPost('opencode_url'))
                     ?: $settings->getGlobal('opencode_url', 'http://127.0.0.1:4096'), '/');

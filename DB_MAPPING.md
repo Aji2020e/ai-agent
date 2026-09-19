@@ -928,3 +928,42 @@ Di `/admin/api`, setiap baris klien sekarang bisa di-expand untuk menampilkan da
 php spark app:test-api-keys
 ```
 
+---
+
+## Multi API Key untuk Provider AI
+
+Provider AI bertipe *OpenAI-compatible* (OpenAI, OpenRouter, Groq, DeepSeek, dll.) sekarang bisa menyimpan **banyak API key** di setting `openai_keys`. Sistem akan mencoba key secara berurutan (failover) saat chat.
+
+### Cara Kerja
+
+- Setting `openai_keys` menyimpan array JSON terenkripsi, contoh:
+  ```json
+  ["sk-aaaa...", "sk-bbbb...", "sk-cccc..."]
+  ```
+- `AiClient::currentConfig()` membaca daftar key dan mengembalikan `apiKey` (key pertama) serta `apiKeys` (seluruh daftar).
+- Saat chat OpenAI gagal (HTTP 401/429/5xx atau error jaringan), `AiClient::chatOpenAi()` otomatis mencoba key berikutnya.
+- Backward compatibility: bila `openai_keys` kosong tapi secret lama `openai_key` masih ada, secret lama tetap dipakai sebagai satu-satunya key.
+
+### Admin UI
+
+Di halaman **Pengaturan AI → API Key**:
+
+- Tombol *Tambah API Key* menambah input key baru.
+- Tombol *hapus* (tong sampah) menghapus baris key.
+- Semua key tersimpan terenkripsi di tabel `settings`.
+
+### Penggunaan
+
+1. Pilih provider **API Key**.
+2. Isi Base URL dan model.
+3. Tambahkan satu atau beberapa API key.
+4. Simpan.
+
+### Perintah Test
+
+```bash
+php spark app:test-ai-provider   # (jika tersedia) atau lewat UI "Tes Koneksi"
+```
+
+Catatan: *Tes Koneksi* hanya memeriksa key pertama yang tersimpan/diisi.
+

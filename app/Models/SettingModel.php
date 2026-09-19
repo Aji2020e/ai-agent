@@ -148,4 +148,35 @@ class SettingModel extends Model
 
         return $this->setGlobal($key, 'enc:' . bin2hex(service('encrypter')->encrypt($value)));
     }
+
+    /** Ambil daftar secret (array) yang disimpan sebagai JSON terenkripsi. */
+    public function getSecretList(string $key): array
+    {
+        $raw = $this->getSecret($key, '[]');
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+
+        try {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return array_values(array_filter($decoded, static fn ($v) => is_string($v) && $v !== ''));
+            }
+        } catch (\Throwable) {
+        }
+
+        return [];
+    }
+
+    /** Simpan daftar secret sebagai JSON terenkripsi. Kosong = hapus. */
+    public function setSecretList(string $key, array $values): bool
+    {
+        $filtered = array_values(array_filter($values, static fn ($v) => is_string($v) && $v !== ''));
+
+        if ($filtered === []) {
+            return $this->setSecret($key, '');
+        }
+
+        return $this->setSecret($key, json_encode($filtered, JSON_UNESCAPED_SLASHES));
+    }
 }
