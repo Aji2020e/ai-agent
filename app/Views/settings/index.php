@@ -124,23 +124,37 @@
                                         <?php else: ?>
                                             <?php foreach ($openai_keys as $k):
                                                 $prefix = substr($k, 0, 8);
+                                                $type   = strtoupper(substr($k, 0, 5));
                                             ?>
-                                            <div class="input-group mb-2" data-key="<?= esc($prefix) ?>">
+                                            <div class="input-group mb-2" data-key="<?= esc($prefix) ?>" data-key-type="<?= esc($prefix) ?>">
                                                 <span class="input-group-text"><i class="bi bi-key"></i></span>
-                                                <input type="password" name="openai_keys[]" class="form-control" value="<?= esc($k) ?>" placeholder="sk-..." autocomplete="new-password">
+                                                <!-- Input tersembunyi menyimpan key asli untuk submit form -->
+                                                <input type="hidden" name="openai_keys[]" value="<?= esc($k) ?>">
+                                                <!-- Tampilan mask: hanya tampilkan prefix + 4 char terakhir -->
+                                                <span class="form-control text-monospace small bg-light" style="cursor:text" title="Key tersimpan (tersembunyi demi keamanan)">
+                                                    <code><?= esc(substr($k, 0, 8)) ?></code>••••••<code><?= esc(substr($k, -4)) ?></code>
+                                                </span>
                                                 <span class="test-status input-group-text" style="display:none;width:140px;min-width:140px">
                                                     <span class="spinner-border spinner-border-sm me-1" role="status"></span>
                                                     <small>Menguji...</small>
                                                 </span>
-                                                <button type="button" class="btn btn-outline-secondary btn-test-single-key" title="Tes koneksi per key"><i class="bi bi-lightning"></i></button>
-                                                <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus dari database"><?= esc($prefix) ?></button>
+                                                <!-- Badge: deteksi jenis key dari prefix -->
+                                                <span class="input-group-text fw-bold" style="width:110px;text-align:center;min-width:110px;background:#f0f0f0;border-radius:6px;font-size:.82rem;">
+                                                    <?= \App\Controllers\Settings::detectProvider($k) ?>
+                                                </span>
+                                                <button type="button" class="btn btn-outline-secondary btn-test-single-key" title="Tes koneksi per key" style="width:40px;"><i class="bi bi-lightning"></i></button>
+                                                <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus dari database" style="width:40px;"><i class="bi bi-trash"></i></button>
                                             </div>
                                             <?php endforeach; ?>
                                         <?php endif; ?>
                                     </div>
                                     <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="btnAddKey"><i class="bi bi-plus-lg me-1"></i>Tambah API Key</button>
                                     <div id="keyMsg" class="mt-2" style="display:none"></div>
-                                    <div class="form-text">Key untuk <strong id="currentProvider"><?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?></strong>. Simpan banyak key untuk rotasi/failover. Gunakan tombol hapus untuk menghapus langsung dari database.</div>
+                                    <div class="form-text">
+                                        Key untuk <strong id="currentProvider"><?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?></strong>.
+                                        Setiap key ditandai dengan badge jenisnya (GROQ / OPENROUTER / DLL).
+                                        Tombol <b>Hapus</b> akan langsung menghapus dari database — bukan hanya dari form.
+                                    </div>
                                 </div>
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(Tes Koneksi untuk daftar)</small></label>
@@ -453,16 +467,29 @@ document.addEventListener('click', function(e) {
         return;
     }
     e.preventDefault();
+
     const row     = e.target.closest('.input-group');
     const prefix  = row.dataset.key || '';
     const csrfMeta = document.querySelector('meta[name="csrf-token"]');
     const csrfName = document.querySelector('meta[name="csrf-name"]')?.content || 'csrf_test_name';
     const csrfToken = csrfMeta?.content || '';
+
+    // Jika key BARU (belum tersimpan, tidak ada prefix), cukup hapus dari DOM
+    if (prefix === '') {
+        row.remove();
+        return;
+    }
+
     const baseUrl = document.getElementById('openaiBase').value.trim() || 'https://api.openai.com';
+
+    // Konfirmasi sebelum hapus
+    if (!confirm('Hapus API key dengan prefix "' + prefix + '" dari database?')) {
+        return;
+    }
 
     // Disable tombol selama proses
     e.target.disabled  = true;
-    e.target.innerHTML = '<span class="spinner-border spinner-border-sm spinner-border-sm" style="width:1rem;height:1rem;"></span>';
+    e.target.innerHTML = '<span class="spinner-border spinner-border-sm" style="width:1rem;height:1rem;"></span>';
 
     const fd = new FormData();
     fd.append('provider',   'openai');
@@ -507,8 +534,8 @@ document.getElementById('btnAddKey')?.addEventListener('click', function () {
     row.innerHTML = `
         <span class="input-group-text"><i class="bi bi-key"></i></span>
         <input type="password" name="openai_keys[]" class="form-control" placeholder="sk-..." autocomplete="new-password">
-        <button type="button" class="btn btn-outline-secondary btn-test-single-key" title="Tes koneksi per key"><i class="bi bi-lightning"></i></button>
-        <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus"><i class="bi bi-trash"></i></button>
+        <button type="button" class="btn btn-outline-secondary btn-test-single-key" title="Tes koneksi per key" style="width:40px;"><i class="bi bi-lightning"></i></button>
+        <button type="button" class="btn btn-outline-danger btn-remove-key" title="Hapus baris ini (belum tersimpan)" style="width:40px;"><i class="bi bi-trash"></i></button>
     `;
     list.appendChild(row);
 });

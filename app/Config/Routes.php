@@ -56,6 +56,7 @@ $routes->group('admin', ['filter' => 'admin'], static function ($routes) {
     $routes->post('settings/update', 'Settings::update');
     $routes->post('settings/test', 'Settings::test');
     $routes->post('settings/remove-key', 'Settings::removeKey');
+    $routes->post('settings/key-providers', 'Settings::keyProviders');
     $routes->get('api', 'AdminApi::index');
     $routes->post('api/clients', 'AdminApi::createClient');
     // Kebijakan otorisasi ("prosedur") per klien + jejak pelanggaran

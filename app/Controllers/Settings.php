@@ -79,6 +79,41 @@ class Settings extends BaseController
         ]);
     }
 
+    /** Tampilkan daftar provider berdasarkan prefix key API. Dipakai via AJAX. */
+    public function keyProviders()
+    {
+        $settings = new SettingModel();
+        $provider = trim((string) $this->request->getPost('provider'));
+
+        if ($provider !== 'openai') {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Invalid provider.',
+                'csrf'    => csrf_hash(),
+            ]);
+        }
+
+        $baseUrl = rtrim(trim((string) $this->request->getPost('base_url'))
+            ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
+
+        $keyMap = $settings->getSecretMap('openai_key_map');
+        $bucket = $keyMap[$baseUrl] ?? [];
+
+        $providers = [];
+        foreach ($bucket as $k) {
+            $providers[] = [
+                'prefix' => substr($k, 0, 8),
+                'name'   => self::detectProvider($k),
+            ];
+        }
+
+        return $this->response->setJSON([
+            'success' => true,
+            'keys'    => $providers,
+            'csrf'    => csrf_hash(),
+        ]);
+    }
+
     public function update()
     {
         $provider = $this->request->getPost('ai_provider');
@@ -158,11 +193,23 @@ class Settings extends BaseController
     /** Hapus satu API key dari bucket Base URL tertentu. Dipakai via AJAX. */
     public function removeKey()
     {
+        // Pastikan CSRF guard tidak menghalangi
+        helper('csrf');
+
         $settings = new SettingModel();
         $provider = trim((string) $this->request->getPost('provider'));
         $prefix   = trim((string) $this->request->getPost('key_prefix')); // 8 char prefix
-        $baseUrl  = rtrim(trim((string) $this->request->getPost('base_url'))
-            ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
+
+        // Jika tidak ada base_url di request, pakai yang tersimpan
+        $postedBase = trim((string) $this->request->getPost('base_url'));
+        if ($postedBase === '') {
+            $baseUrl = rtrim(
+                trim((string) $settings->getGlobal('openai_base', 'https://api.openai.com')) ?: 'https://api.openai.com',
+                '/'
+            );
+        } else {
+            $baseUrl = rtrim($postedBase, '/');
+        }
 
         if ($provider !== 'openai' || $prefix === '') {
             return $this->response->setJSON([
@@ -172,13 +219,14 @@ class Settings extends BaseController
             ]);
         }
 
+        // Ambil semua key map
         $keyMap = $settings->getSecretMap('openai_key_map');
         $bucket = $keyMap[$baseUrl] ?? [];
 
         if (empty($bucket)) {
             return $this->response->setJSON([
                 'success' => false,
-                'message' => 'Tidak ada key untuk provider ini.',
+                'message' => 'Tidak ada key tersimpan untuk Base URL: ' . parse_url($baseUrl, PHP_URL_HOST),
                 'csrf'    => csrf_hash(),
             ]);
         }
@@ -193,22 +241,55 @@ class Settings extends BaseController
         }
 
         if (! $found) {
+            // Tampilkan semua prefix yang ada agar admin tahu mana yang sebenarnya ada
+            $existingPrefixes = [];
+            foreach ($bucket as $k) {
+                $existingPrefixes[] = substr($k, 0, 8);
+            }
+            $hint = ! empty($existingPrefixes)
+                ? ' Key yang ada: ' . implode(', ', $existingPrefixes)
+                : ' Bucket kosong.';
+
             return $this->response->setJSON([
                 'success' => false,
-                'message' => 'Key dengan prefix "' . substr($prefix, 0, 8) . '" tidak ditemukan.',
+                'message' => 'Key dengan prefix "' . substr($prefix, 0, 8) . '" tidak ditemukan di bucket ' . parse_url($baseUrl, PHP_URL_HOST) . '.' . $hint,
                 'csrf'    => csrf_hash(),
             ]);
         }
 
-        // Normalisasi & simpan kembali (tanpa index gap kosong)
+        // Normalisasi & simpan kembali
         $keyMap[$baseUrl] = array_values(array_filter($bucket));
         $settings->setSecretMap('openai_key_map', $keyMap);
 
         return $this->response->setJSON([
-            'success' => true,
-            'message' => 'API key berhasil dihapus.',
-            'csrf'    => csrf_hash(),
+            'success'      => true,
+            'message'      => 'API key berhasil dihapus.',
+            'remaining'    => count($keyMap[$baseUrl]),
+            'csrf'         => csrf_hash(),
         ]);
+    }
+
+    /** Deteksi jenis provider berdasarkan prefix key API. */
+    public static function detectProvider(string $key): string
+    {
+        $key = strtoupper(trim($key));
+        if (str_starts_with($key, 'GSK_') || str_starts_with($key, 'GSK-')) {
+            return 'GROQ';
+        }
+        if (str_starts_with($key, 'SK-OR-')) {
+            return 'OPENROUTER';
+        }
+        if (str_starts_with($key, 'SK-ISD-') || str_starts_with($key, 'DEEPSEEK')) {
+            return 'DEEPSEEK';
+        }
+        if (str_starts_with($key, 'ANTHROPIC') || str_starts_with($key, 'HSK-')) {
+            return 'ANTHROPIC';
+        }
+        if (str_starts_with($key, 'SK-') || str_starts_with($key, 'sk-')) {
+            return 'OPENAI-COMPATIBLE';
+        }
+
+        return 'UNKNOWN';
     }
 
     /**
