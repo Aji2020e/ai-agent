@@ -27,27 +27,27 @@ $violationTally = $violationTally ?? [];
                 <p class="text-secondary small">Aplikasi akademik memanggil <code>/api/*</code> dengan header <code>X-API-Key</code> (120 req/mnt/key). HMAC opsional anti-replay.</p>
                 <form action="<?= site_url('admin/api/clients') ?>" method="post" class="row g-2 mb-3">
                     <?= csrf_field() ?>
-                    <div class="col-md-5">
+                    <div class="col-md-4 col-12">
                         <input type="text" name="name" class="form-control form-control-sm" placeholder="Nama aplikasi (mis. siakad)" required maxlength="100">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-3 col-6">
                         <select name="modules[]" class="form-select form-select-sm" multiple title="Kosongkan = semua modul">
                             <?php foreach ($modules as $m): ?>
                             <option value="<?= $m ?>"><?= ucfirst($m) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-3 col-6">
                         <select name="skills[]" class="form-select form-select-sm" multiple title="Kosongkan = semua skill">
                             <?php foreach ($skills as $skillKey => $skillLabel): ?>
                             <option value="<?= $skillKey ?>"><?= esc($skillLabel) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-md-2 col-6">
                         <input type="number" name="expiry_days" class="form-control form-control-sm" placeholder="Hari" title="Masa berlaku (hari), kosong = selamanya" min="1">
                     </div>
-                    <div class="col-md-2 d-grid">
+                    <div class="col-md-2 col-6 d-grid">
                         <button class="btn btn-ai btn-sm" title="Buat"><i class="bi bi-plus-lg"></i></button>
                     </div>
                     <div class="col-12">
@@ -60,8 +60,8 @@ $violationTally = $violationTally ?? [];
                         <div class="form-text">Model khusus klien ini — kosong = ikut default global. Ketik untuk mencari.</div>
                     </div>
                 </form>
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover align-middle">
+                <div class="table-responsive" style="overflow-x: auto;">
+                    <table class="table table-sm table-hover align-middle" style="min-width: 1100px; table-layout: auto;">
                         <thead class="table-light"><tr><th>Nama</th><th>Modul</th><th>Skill</th><th>Wewenang</th><th>Keamanan</th><th>Status</th><th>Aksi</th></tr></thead>
                         <tbody>
                         <?php foreach ($clients as $c): ?>
