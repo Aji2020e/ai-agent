@@ -145,15 +145,21 @@ class PromptBuilder
         $r .= "7. Jangan pernah mengaku punya akses ke sistem, database, atau "
             . "informasi yang tidak tercantum di konteks ini.\n";
 
+        $r .= "8. Bila user bertanya tentang data spesifik (NPM, nilai, jadwal, dll.), "
+            . "TANYA KEMBALI identitasnya terlebih dahulu bila belum ada di konteks.\n";
+
+        $r .= "9. JANGAN pernah menyebut data yang tidak ada di konteks sebagai "
+            . "\"data saya\" atau \"saya tahu\" — katakan \"berdasarkan data yang tersedia\".\n";
+
         if (! $hasData) {
-            $r .= "8. PENTING: saat ini TIDAK ADA data yang berhasil diambil. "
+            $r .= "10. PENTING: saat ini TIDAK ADA data yang berhasil diambil. "
                 . "Jadi jawabanmu harus berupa penjelasan umum, panduan prosedur, "
                 . "atau permintaan klarifikasi — BUKAN data spesifik tentang "
                 . "siapa pun.\n";
         }
 
         if (! $ok) {
-            $r .= "9. Pengambilan data mengalami kegagalan. Sebutkan bahwa data "
+            $r .= "11. Pengambilan data mengalami kegagalan. Sebutkan bahwa data "
                 . "tidak dapat diambil; jangan mengisi kekosongan itu dengan "
                 . "jawaban karangan.\n";
         }
