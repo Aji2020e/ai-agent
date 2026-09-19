@@ -149,26 +149,7 @@ class SettingModel extends Model
         return $this->setGlobal($key, 'enc:' . bin2hex(service('encrypter')->encrypt($value)));
     }
 
-    /** Ambil daftar secret (array) yang disimpan sebagai JSON terenkripsi. */
-    public function getSecretList(string $key): array
-    {
-        $raw = $this->getSecret($key, '[]');
-        if ($raw === null || $raw === '') {
-            return [];
-        }
-
-        try {
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                return array_values(array_filter($decoded, static fn ($v) => is_string($v) && $v !== ''));
-            }
-        } catch (\Throwable) {
-        }
-
-        return [];
-    }
-
-    /** Simpan daftar secret sebagai JSON terenkripsi. Kosong = hapus. */
+    /** Ambil daftar secret sebagai JSON terenkripsi. Kosong = hapus. */
     public function setSecretList(string $key, array $values): bool
     {
         $filtered = array_values(array_filter($values, static fn ($v) => is_string($v) && $v !== ''));
@@ -178,5 +159,70 @@ class SettingModel extends Model
         }
 
         return $this->setSecret($key, json_encode($filtered, JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * Ambil peta kunci per identifier (base_url → list of keys).
+     * Struktur tersimpan:
+     *   {"https://api.openai.com": ["sk-key1", "sk-key2"], "https://api.groq.com/openai": ["gsk_key1"]}
+     */
+    public function getSecretMap(string $key): array
+    {
+        $raw = $this->getSecret($key, '[]');
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+
+        try {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                // Normalisasi: pastikan nilai adalah array string
+                $result = [];
+                foreach ($decoded as $url => $keys) {
+                    if (empty($url) || ! is_array($keys)) {
+                        continue;
+                    }
+                    $normalKeys = array_values(
+                        array_filter(
+                            array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', $keys),
+                            static fn ($v) => $v !== ''
+                        )
+                    );
+                    if (! empty($normalKeys)) {
+                        $result[$url] = $normalKeys;
+                    }
+                }
+                return $result;
+            }
+        } catch (\Throwable) {
+        }
+
+        return [];
+    }
+
+    /** Simpan peta kunci per identifier. Kosong = hapus semua. */
+    public function setSecretMap(string $key, array $data): bool
+    {
+        $normalized = [];
+        foreach ($data as $url => $keys) {
+            if (empty($url)) {
+                continue;
+            }
+            $normalKeys = array_values(
+                array_filter(
+                    array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', (array) $keys),
+                    static fn ($v) => $v !== ''
+                )
+            );
+            if (! empty($normalKeys)) {
+                $normalized[$url] = $normalKeys;
+            }
+        }
+
+        if ($normalized === []) {
+            return $this->setSecret($key, '');
+        }
+
+        return $this->setSecret($key, json_encode($normalized, JSON_UNESCAPED_SLASHES));
     }
 }

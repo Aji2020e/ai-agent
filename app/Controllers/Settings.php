@@ -15,41 +15,67 @@ class Settings extends BaseController
     {
         $settings = new SettingModel();
 
-        $openaiKeys = $settings->getSecretList('openai_keys');
-        // backward compatibility: secret lama tetap dipakai bila daftar kosong
-        if ($openaiKeys === []) {
-            $old = $settings->getSecret('openai_key', '');
-            if ($old !== '') {
-                $openaiKeys = [$old];
+        // --- Kunci disimpan PER BASE_URL ---
+        // Setiap provider (OpenAI, Groq, DeepSeek, OpenRouter) punya format key berbeda.
+        // Kami simpan di setting `openai_key_map` berbentuk:
+        //   {
+        //     "https://api.openai.com":          ["sk-key1", "sk-key2"],
+        //     "https://openrouter.ai/api":       ["sk-or-key1"],
+        //     "https://api.groq.com/openai":     ["gsk_key1"]
+        //   }
+        // View hanya menampilkan kunci untuk Base URL yang sedang aktif saja.
+        $baseGlobal = rtrim(
+            trim((string) $settings->getGlobal('openai_base', 'https://api.openai.com')) ?: 'https://api.openai.com',
+            '/'
+        );
+
+        $keyMap         = $settings->getSecretMap('openai_key_map');
+        $currentKeys    = $keyMap[$baseGlobal] ?? [];
+
+        // Migrasi otomatis dari struktur lama (flat list / single key) → struktur per-base-url
+        if ($currentKeys === [] && ! isset($keyMap[$baseGlobal])) {
+            $legacyList = $settings->getSecretList('openai_keys');
+            if (! empty($legacyList)) {
+                $keyMap[$baseGlobal] = $legacyList;
+                $settings->setSecretMap('openai_key_map', $keyMap);
+                $currentKeys         = $legacyList;
+            } else {
+                $oldSingle = $settings->getSecret('openai_key', '');
+                if ($oldSingle !== '') {
+                    $keyMap[$baseGlobal] = [$oldSingle];
+                    $settings->setSecretMap('openai_key_map', $keyMap);
+                    $currentKeys        = [$oldSingle];
+                }
             }
         }
 
         return view('settings/index', [
-            'title'          => 'Pengaturan AI',
-            'ai_provider'    => $settings->getGlobal('ai_provider', 'ollama') ?: 'ollama',
-            'ollama_url'     => $settings->getGlobal('ollama_url', env('app.ollamaUrl', 'http://localhost:11434')),
-            'ollama_model'   => $settings->getGlobal('ollama_model', env('app.ollamaModel', 'qwen2.5-coder:32b')),
-            'openai_base'    => $settings->getGlobal('openai_base', 'https://api.openai.com'),
-            'openai_model'   => $settings->getGlobal('openai_model', 'gpt-4o-mini'),
-            'openai_keys'    => $openaiKeys,
-            'has_openai_key' => $openaiKeys !== [],
-            'opencode_url'   => $settings->getGlobal('opencode_url', 'http://127.0.0.1:4096'),
-            'opencode_user'  => $settings->getGlobal('opencode_user', ''),
-            'opencode_model' => $settings->getGlobal('opencode_model', ''),
-            'has_oc_pass'    => $settings->getSecret('opencode_pass', '') !== '',
-            'search_provider' => $settings->getGlobal('search_provider', 'off') ?: 'off',
-            'search_max'     => $settings->getGlobal('search_max', '5'),
-            'has_search_key' => $settings->getSecret('search_key', '') !== '',
+            'title'              => 'Pengaturan AI',
+            'ai_provider'        => $settings->getGlobal('ai_provider', 'ollama') ?: 'ollama',
+            'ollama_url'         => $settings->getGlobal('ollama_url', env('app.ollamaUrl', 'http://localhost:11434')),
+            'ollama_model'       => $settings->getGlobal('ollama_model', env('app.ollamaModel', 'qwen2.5-coder:32b')),
+            'openai_base'        => $baseGlobal,
+            'openai_model'       => $settings->getGlobal('openai_model', 'gpt-4o-mini'),
+            'openai_keys'        => $currentKeys,
+            'has_openai_key'     => $currentKeys !== [],
+            'openai_key_map_all' => $keyMap,      // Semua provider yang pernah diset (untuk info UI)
+            'opencode_url'       => $settings->getGlobal('opencode_url', 'http://127.0.0.1:4096'),
+            'opencode_user'      => $settings->getGlobal('opencode_user', ''),
+            'opencode_model'     => $settings->getGlobal('opencode_model', ''),
+            'has_oc_pass'        => $settings->getSecret('opencode_pass', '') !== '',
+            'search_provider'    => $settings->getGlobal('search_provider', 'off') ?: 'off',
+            'search_max'         => $settings->getGlobal('search_max', '5'),
+            'has_search_key'     => $settings->getSecret('search_key', '') !== '',
 
             // ---- Tuning kualitas & kecepatan jawaban ----
-            'ai_temperature'         => $settings->getGlobal('ai_temperature', '0.2'),
-            'ai_top_p'               => $settings->getGlobal('ai_top_p', '0.9'),
-            'ai_max_tokens'          => $settings->getGlobal('ai_max_tokens', '1024'),
-            'ai_max_context_tokens'  => $settings->getGlobal('ai_max_context_tokens', '6000'),
-            'ai_history_limit'       => $settings->getGlobal('ai_history_limit', '40'),
-            'ai_num_ctx'             => $settings->getGlobal('ai_num_ctx', '8192'),
-            'ai_keep_alive'          => $settings->getGlobal('ai_keep_alive', '30m'),
-            'from_env'       => $settings->getGlobal('ollama_url') === null && $settings->getGlobal('ai_provider') === null,
+            'ai_temperature'           => $settings->getGlobal('ai_temperature', '0.2'),
+            'ai_top_p'                 => $settings->getGlobal('ai_top_p', '0.9'),
+            'ai_max_tokens'            => $settings->getGlobal('ai_max_tokens', '1024'),
+            'ai_max_context_tokens'    => $settings->getGlobal('ai_max_context_tokens', '6000'),
+            'ai_history_limit'         => $settings->getGlobal('ai_history_limit', '40'),
+            'ai_num_ctx'               => $settings->getGlobal('ai_num_ctx', '8192'),
+            'ai_keep_alive'            => $settings->getGlobal('ai_keep_alive', '30m'),
+            'from_env'                 => $settings->getGlobal('ollama_url') === null && $settings->getGlobal('ai_provider') === null,
         ]);
     }
 
@@ -82,13 +108,21 @@ class Settings extends BaseController
             $settings->setGlobal('ollama_url', rtrim(trim($this->request->getPost('ollama_url')), '/'));
             $settings->setGlobal('ollama_model', trim($this->request->getPost('ollama_model')));
         } elseif ($provider === 'openai') {
-            if (! $this->validate(['openai_base' => 'required|valid_url|max_length[255]', 'openai_model' => 'required|max_length[100]'])) {
+            if (! $this->validate([
+                'openai_base'   => 'required|valid_url|max_length[255]',
+                'openai_model'  => 'required|max_length[100]',
+            ])) {
                 return redirect()->back()->withInput()->with('errors', $this->validator->getErrors());
             }
-            $settings->setGlobal('openai_base', rtrim(trim($this->request->getPost('openai_base')), '/'));
-            $settings->setGlobal('openai_model', trim($this->request->getPost('openai_model')));
 
-            $keys = $this->request->getPost('openai_keys');
+            // Base URL & model disimpan sesuai biasa
+            $base      = rtrim(trim((string) $this->request->getPost('openai_base')), '/');
+            $settings->setGlobal('openai_base', $base);
+            $settings->setGlobal('openai_model', trim((string) $this->request->getPost('openai_model')));
+
+            // Kunci disimpan PER BASE_URL — tiap provider punya bucket kunci sendiri
+            $keyMap    = $settings->getSecretMap('openai_key_map');
+            $keys      = $this->request->getPost('openai_keys');
             if (is_array($keys)) {
                 $filtered = [];
                 foreach ($keys as $k) {
@@ -97,8 +131,9 @@ class Settings extends BaseController
                         $filtered[] = $k;
                     }
                 }
-                $settings->setSecretList('openai_keys', $filtered);
+                $keyMap[$base] = $filtered;
             }
+            $settings->setSecretMap('openai_key_map', $keyMap);
         } else {
             if (! $this->validate([
                 'opencode_url'   => 'required|valid_url|max_length[255]',
@@ -169,13 +204,14 @@ class Settings extends BaseController
             $keyResults = [];
             
             if ($provider === 'openai') {
-                $base = rtrim(trim((string) $this->request->getPost('openai_base'))
+                // Ambil Base URL yang diuji (dari form atau settings)
+                $base   = rtrim(trim((string) $this->request->getPost('openai_base'))
                     ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
-                
-                // Ambil key yang diuji dari request atau dari settings yang tersimpan
+
+                // Kunci dari form request (prioritas) atau dari map settings
                 $testKeys = $this->request->getPost('openai_keys');
                 $keysToTest = [];
-                
+
                 if (is_array($testKeys) && !empty($testKeys)) {
                     foreach ($testKeys as $k) {
                         $k = trim((string) $k);
@@ -184,21 +220,28 @@ class Settings extends BaseController
                         }
                     }
                 }
-                
+
+                // Jika form tidak mengirim key, ambil dari map per base URL
                 if (empty($keysToTest)) {
-                    $savedKeys = $settings->getSecretList('openai_keys');
-                    if (!empty($savedKeys)) {
-                        $keysToTest = $savedKeys;
+                    $keyMap = $settings->getSecretMap('openai_key_map');
+                    if (! empty($keyMap[$base])) {
+                        $keysToTest = $keyMap[$base];
                     } else {
-                        $oldKey = $settings->getSecret('openai_key', '');
-                        if ($oldKey !== '') {
-                            $keysToTest = [$oldKey];
+                        // Fallback ke legacy flat list
+                        $legacy = $settings->getSecretList('openai_keys');
+                        if (! empty($legacy)) {
+                            $keysToTest = $legacy;
+                        } else {
+                            $oldKey = $settings->getSecret('openai_key', '');
+                            if ($oldKey !== '') {
+                                $keysToTest = [$oldKey];
+                            }
                         }
                     }
                 }
-                
+
                 if (empty($keysToTest)) {
-                    throw new \RuntimeException('Tidak ada API key yang tersedia untuk diuji.');
+                    throw new \RuntimeException('Tidak ada API key untuk Base URL ' . parse_url($base, PHP_URL_HOST) . '. Tambahkan terlebih dahulu.');
                 }
                 
                 $models = null;

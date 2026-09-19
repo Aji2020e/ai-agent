@@ -95,11 +95,25 @@
                                     <div class="form-text">Contoh: OpenAI <code>https://api.openai.com</code> · Groq <code>https://api.groq.com/openai</code> · DeepSeek <code>https://api.deepseek.com</code> · OpenRouter <code>https://openrouter.ai/api</code></div>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label fw-semibold">API Keys untuk 
+                                    <label class="form-label fw-semibold">API Keys untuk provider 
                                         <span class="badge text-bg-info fw-normal" id="providerName">
                                             <?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?>
                                         </span>
+                                        <small class="text-secondary">(kunci disimpan PER BASE_URL)</small>
                                         <?= $has_openai_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
+
+                                    <!-- Info: ringkasan semua provider yang sudah punya key -->
+                                    <?php if (! empty($openai_key_map_all)): ?>
+                                    <div class="alert alert-secondary small mb-2 py-1 px-2">
+                                        <i class="bi bi-info-circle me-1"></i> Provider yang pernah diset (total <strong><?= count($openai_key_map_all) ?></strong>):
+                                        <ul class="mb-0 mt-1 ps-3">
+                                            <?php foreach ($openai_key_map_all as $url => $keys): ?>
+                                                <li><code><?= esc(rtrim($url, '/')) ?></code> — <strong><?= count($keys) ?></strong> key</li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    </div>
+                                    <?php endif; ?>
+
                                     <div id="openaiKeyList">
                                         <?php if (empty($openai_keys)): ?>
                                         <div class="input-group mb-2">

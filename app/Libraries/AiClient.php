@@ -24,17 +24,26 @@ class AiClient
         $provider = $s->getGlobal('ai_provider', 'ollama') ?: 'ollama';
 
         if ($provider === 'openai') {
-            $keys = $s->getSecretList('openai_keys');
-            // backward compatibility: secret lama tetap dipakai bila daftar kosong
+            // Baca kunci PER BASE_URL dari map
+            $baseGlobal = rtrim($s->getGlobal('openai_base', 'https://api.openai.com') ?: 'https://api.openai.com', '/');
+            $keyMap     = $s->getSecretMap('openai_key_map');
+            $keys       = $keyMap[$baseGlobal] ?? [];
+
+            // Backward compatibility: secret lama tetap dipakai bila daftar kosong
             if ($keys === []) {
-                $old = $s->getSecret('openai_key', '');
-                if ($old !== '') {
-                    $keys = [$old];
+                $legacy = $s->getSecretList('openai_keys');
+                if (! empty($legacy)) {
+                    $keys = $legacy;
+                } else {
+                    $old = $s->getSecret('openai_key', '');
+                    if ($old !== '') {
+                        $keys = [$old];
+                    }
                 }
             }
 
             return ['openai',
-                rtrim($s->getGlobal('openai_base', 'https://api.openai.com') ?: 'https://api.openai.com', '/'),
+                $baseGlobal,
                 $s->getGlobal('openai_model', 'gpt-4o-mini') ?: 'gpt-4o-mini',
                 [
                     'apiKey'  => (string) ($keys[0] ?? ''),

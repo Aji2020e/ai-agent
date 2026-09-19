@@ -932,27 +932,37 @@ php spark app:test-api-keys
 
 ## Multi API Key untuk Provider AI
 
-Provider AI bertipe *OpenAI-compatible* (OpenAI, OpenRouter, Groq, DeepSeek, dll.) sekarang bisa menyimpan **banyak API key** di setting `openai_keys`. Sistem akan mencoba key secara berurutan (failover) saat chat.
+Provider AI bertipe *OpenAI-compatible* (OpenAI, OpenRouter, Groq, DeepSeek, dll.) sekarang bisa menyimpan **banyak API key** di setting `openai_key_map`. Setiap Base URL (provider) punya bucket kunci terpisah — jadi key dari Groq (`gsk_...`) tidak tercampur dengan key dari OpenAI (`sk-...`).
+
+### Skema Penyimpanan
+
+- Setting `openai_key_map` menyimpan JSON terenkripsi berbentuk peta:
+  ```json
+  {
+    "https://api.openai.com/v1":          ["sk-key-openai-1", "sk-key-openai-2"],
+    "https://openrouter.ai/api/v1":       ["sk-or-key-1"],
+    "https://api.groq.com/openai":        ["gsk_key-1", "gsk_key-2"]
+  }
+  ```
+- `SettingModel::getSecretMap('openai_key_map')` → return array `[base_url => [keys]]`
+- `SettingModel::setSecretMap('openai_key_map', $map)` → simpan seluruh peta
+- Tiap Base URL punya daftar kunci sendiri yang hanya aktif saat provider tersebut dipilih.
 
 ### Cara Kerja
 
-- Setting `openai_keys` menyimpan array JSON terenkripsi, contoh:
-  ```json
-  ["sk-aaaa...", "sk-bbbb...", "sk-cccc..."]
-  ```
-- `AiClient::currentConfig()` membaca daftar key dan mengembalikan `apiKey` (key pertama) serta `apiKeys` (seluruh daftar).
-- Saat chat OpenAI gagal (HTTP 401/429/5xx atau error jaringan), `AiClient::chatOpenAi()` otomatis mencoba key berikutnya.
-- Backward compatibility: bila `openai_keys` kosong tapi secret lama `openai_key` masih ada, secret lama tetap dipakai sebagai satu-satunya key.
+- `AiClient::currentConfig()` membaca kunci sesuai Base URL yang sedang aktif.
+- Saat chat OpenAI gagal (HTTP 401/429/5xx atau error jaringan), `AiClient::chatOpenAi()` otomatis mencoba key berikutnya dalam bucket yang sama.
+- Backward compatibility: bila `openai_keys` (struktur lama) ada tapi `openai_key_map` kosong, sistem akan migrasi otomatis.
 
 ### Admin UI
 
 Di halaman **Pengaturan AI → API Key**:
 
-- **Provider name** ditampilkan di judul bagian (misal: `api.openai.com`, `openrouter.ai`) — diambil dari Base URL.
-- Tombol *Tambah API Key* menambah input key baru.
+- Nama provider ditampilkan dari hostname Base URL (misal: `api.openai.com`, `openrouter.ai`).
+- Ringkasan semua provider yang pernah diset ditampilkan di atas daftar key.
+- Tombol *Tambah API Key* menambah input key baru untuk provider yang sedang aktif.
 - Tombol *hapus* (tong sampah) menghapus baris key.
 - **Tombol petir** di setiap baris key menguji koneksi per key secara individual.
-- Semua key tersimpan terenkripsi di tabel `settings`.
 
 ### Penggunaan
 
@@ -966,12 +976,12 @@ Di halaman **Pengaturan AI → API Key**:
 
 Terdapat dua jenis tes koneksi:
 
-1. **Tes Semua Key** (tombol utama): Menguji SEMUA key yang ada di daftar dan menampilkan hasil per key:
+1. **Tes Semua Key** (tombol utama): Menguji SEMUA key yang ada di bucket provider saat ini dan menampilkan hasil per key:
    - ✓ Berhasil: key valid dan dapat terhubung
    - ✗ Gagal: key invalid, expired, atau tidak dapat terhubung
    - Daftar model diambil dari key pertama yang berhasil.
 
 2. **Tes Per Key** (tombol petir individual): Menguji satu key spesifik tanpa menyimpan perubahan.
 
-**Catatan**: *Tes Semua Key* akan menguji setiap key yang tersedia (dari form atau dari settings yang tersimpan) dan mengembalikan hasil detail untuk masing-masing key.
+**Catatan**: *Tes Semua Key* akan menguji setiap key yang tersedia di bucket provider yang sama dan mengembalikan hasil detail untuk masing-masing key.
 
