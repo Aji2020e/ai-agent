@@ -166,26 +166,73 @@ class Settings extends BaseController
         $provider = $this->request->getPost('ai_provider') ?: $settings->getGlobal('ai_provider', 'ollama');
 
         try {
+            $keyResults = [];
+            
             if ($provider === 'openai') {
                 $base = rtrim(trim((string) $this->request->getPost('openai_base'))
                     ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
-                $firstKey = '';
+                
+                // Ambil key yang diuji dari request atau dari settings yang tersimpan
                 $testKeys = $this->request->getPost('openai_keys');
-                if (is_array($testKeys)) {
+                $keysToTest = [];
+                
+                if (is_array($testKeys) && !empty($testKeys)) {
                     foreach ($testKeys as $k) {
                         $k = trim((string) $k);
                         if ($k !== '') {
-                            $firstKey = $k;
-                            break;
+                            $keysToTest[] = $k;
                         }
                     }
                 }
-                if ($firstKey === '') {
-                    $firstKey = $settings->getSecretList('openai_keys')[0]
-                        ?? $settings->getSecret('openai_key', '');
+                
+                if (empty($keysToTest)) {
+                    $savedKeys = $settings->getSecretList('openai_keys');
+                    if (!empty($savedKeys)) {
+                        $keysToTest = $savedKeys;
+                    } else {
+                        $oldKey = $settings->getSecret('openai_key', '');
+                        if ($oldKey !== '') {
+                            $keysToTest = [$oldKey];
+                        }
+                    }
                 }
-                $result = AiClient::listModels('openai', $base, ['apiKey' => $firstKey]);
-            } elseif ($provider === 'opencode') {
+                
+                if (empty($keysToTest)) {
+                    throw new \RuntimeException('Tidak ada API key yang tersedia untuk diuji.');
+                }
+                
+                $models = null;
+                $firstSuccessKey = null;
+                
+                // Uji setiap key secara individual
+                foreach ($keysToTest as $key) {
+                    $keyPrefix = substr($key, 0, 8) . '...';
+                    try {
+                        $result = AiClient::listModels('openai', $base, ['apiKey' => $key]);
+                        $keyResults[$keyPrefix] = [
+                            'success' => true,
+                            'message' => '✓ ' . count($result['models'] ?? []) . ' model tersedia'
+                        ];
+                        
+                        if ($models === null) {
+                            $models = $result['models'] ?? [];
+                            $firstSuccessKey = $key;
+                        }
+                    } catch (\RuntimeException $e) {
+                        $keyResults[$keyPrefix] = [
+                            'success' => false,
+                            'message' => '✗ ' . $e->getMessage()
+                        ];
+                    }
+                }
+                
+                if ($models === null) {
+                    throw new \RuntimeException('Semua API key gagal. Coba periksa kembali key dan Base URL.');
+                }
+                
+                $result = ['models' => $models];
+            } 
+            elseif ($provider === 'opencode') {
                 $base = rtrim(trim((string) $this->request->getPost('opencode_url'))
                     ?: $settings->getGlobal('opencode_url', 'http://127.0.0.1:4096'), '/');
                 $result = AiClient::listModels('opencode', $base, [
@@ -194,17 +241,25 @@ class Settings extends BaseController
                     'password' => (string) $this->request->getPost('opencode_pass')
                         ?: $settings->getSecret('opencode_pass', ''),
                 ]);
-            } else {
+            } 
+            else {
                 $base = rtrim(trim((string) $this->request->getPost('ollama_url'))
                     ?: $settings->getGlobal('ollama_url', env('app.ollamaUrl', 'http://localhost:11434')), '/');
                 $result = AiClient::listModels('ollama', $base);
             }
 
-            return $this->response->setJSON([
+            $response = [
                 'success' => true,
-                'models'  => $result['models'],
+                'models'  => $result['models'] ?? [],
                 'csrf'    => csrf_hash(),
-            ]);
+            ];
+            
+            // Tambahkan hasil per-key bila ada
+            if (!empty($keyResults)) {
+                $response['key_results'] = $keyResults;
+            }
+            
+            return $this->response->setJSON($response);
         } catch (\RuntimeException $e) {
             return $this->response->setJSON([
                 'success' => false,

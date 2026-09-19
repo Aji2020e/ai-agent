@@ -95,7 +95,11 @@
                                     <div class="form-text">Contoh: OpenAI <code>https://api.openai.com</code> · Groq <code>https://api.groq.com/openai</code> · DeepSeek <code>https://api.deepseek.com</code> · OpenRouter <code>https://openrouter.ai/api</code></div>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label fw-semibold">API Keys <?= $has_openai_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
+                                    <label class="form-label fw-semibold">API Keys untuk 
+                                        <span class="badge text-bg-info fw-normal" id="providerName">
+                                            <?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?>
+                                        </span>
+                                        <?= $has_openai_key ? '<span class="badge text-bg-success">tersimpan</span>' : '' ?></label>
                                     <div id="openaiKeyList">
                                         <?php if (empty($openai_keys)): ?>
                                         <div class="input-group mb-2">
@@ -105,16 +109,21 @@
                                         </div>
                                         <?php else: ?>
                                             <?php foreach ($openai_keys as $k): ?>
-                                            <div class="input-group mb-2">
+                                            <div class="input-group mb-2" data-key="<?= esc(substr($k, 0, 8)) ?>">
                                                 <span class="input-group-text"><i class="bi bi-key"></i></span>
                                                 <input type="password" name="openai_keys[]" class="form-control" value="<?= esc($k) ?>" placeholder="sk-..." autocomplete="new-password">
+                                                <span class="input-group-text test-status" style="display:none">
+                                                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                                    <span>Menguji...</span>
+                                                </span>
+                                                <button type="button" class="btn btn-outline-secondary btn-test-single-key"><i class="bi bi-lightning"></i></button>
                                                 <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
                                             </div>
                                             <?php endforeach; ?>
                                         <?php endif; ?>
                                     </div>
                                     <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="btnAddKey"><i class="bi bi-plus-lg me-1"></i>Tambah API Key</button>
-                                    <div class="form-text">Simpan banyak key untuk rotasi/failover. Kosongkan untuk menghapus. Tersimpan terenkripsi di database.</div>
+                                    <div class="form-text">Key untuk <strong id="currentProvider"><?= esc(str_replace('https://', '', rtrim(parse_url($openai_base, PHP_URL_HOST) ?: 'api.openai.com', '/'))) ?></strong>. Simpan banyak key untuk rotasi/failover. Kosongkan untuk menghapus. Tersimpan terenkripsi di database.</div>
                                 </div>
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Model <small class="text-secondary fw-normal">(Tes Koneksi untuk daftar)</small></label>
@@ -294,9 +303,22 @@ function syncProv() {
 document.querySelectorAll('input[name="ai_provider"]').forEach(r => r.addEventListener('change', syncProv));
 syncProv();
 
+// Perbarui nama provider saat Base URL berubah
+document.getElementById('openaiBase')?.addEventListener('input', function() {
+    const url = this.value.trim() || 'https://api.openai.com';
+    try {
+        const hostname = new URL(url).hostname.replace('www.', '');
+        document.getElementById('providerName').textContent = hostname;
+        document.getElementById('currentProvider').textContent = hostname;
+    } catch (e) {
+        // invalid URL, keep default
+    }
+});
+
 const modelInput = { ollama: 'ollamaModel', openai: 'openaiModel', opencode: 'opencodeModel' };
 const modelLists = { ollama: 'modelListOllama', openai: 'modelListOpenai', opencode: 'modelListOpencode' };
 
+// Tes koneksi SEMUA key
 document.getElementById('btnTest')?.addEventListener('click', async function () {
     const btn = this;
     const box = document.getElementById('testResult');
@@ -304,7 +326,7 @@ document.getElementById('btnTest')?.addEventListener('click', async function () 
     const name = document.querySelector('meta[name="csrf-name"]')?.content || 'csrf_test_name';
     const prov = curProv();
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Mengecek...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Menguji semua key...';
     box.innerHTML = '';
 
     const fd = new FormData();
@@ -324,13 +346,35 @@ document.getElementById('btnTest')?.addEventListener('click', async function () 
         const res = await fetch('<?= site_url('admin/settings/test') ?>', { method: 'POST', body: fd });
         const data = await res.json();
         if (data.csrf) meta?.setAttribute('content', data.csrf);
+        
         if (data.success) {
             document.getElementById(modelLists[prov]).innerHTML = (data.models || []).map(m => `<option value="${m}">`).join('');
             const list = (data.models || []).map(m => `<li><code>${m}</code></li>`).join('') || '<li class="text-secondary">Tidak ada model.</li>';
             const cur = document.getElementById(modelInput[prov]).value.trim();
             const warn = cur && !(data.models || []).includes(cur)
                 ? `<div class="alert alert-warning mt-2 mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Model <code>${cur}</code> tidak ada di server ini.</div>` : '';
-            box.innerHTML = `<div class="alert alert-success mb-0"><i class="bi bi-check-circle me-2"></i>Terhubung (${(data.models || []).length} model):<ul class="mb-0 mt-2">${list}</ul></div>${warn}`;
+            
+            // Tampilkan hasil per-key jika tersedia
+            let perKeyHtml = '';
+            if (data.key_results && Object.keys(data.key_results).length > 0) {
+                perKeyHtml = '<div class="mt-3"><h6 class="fw-bold">Status per API Key:</h6><ul class="list-group list-group-flush">';
+                for (const [keyPrefix, result] of Object.entries(data.key_results)) {
+                    const badge = result.success 
+                        ? '<span class="badge text-bg-success">✓ Berhasil</span>' 
+                        : '<span class="badge text-bg-danger">✗ Gagal</span>';
+                    perKeyHtml += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                        <code>${keyPrefix}...</code>
+                        ${badge}
+                        <small class="text-secondary">${result.message}</small>
+                    </li>`;
+                }
+                perKeyHtml += '</ul></div>';
+            }
+            
+            box.innerHTML = `<div class="alert alert-success mb-0">
+                <i class="bi bi-check-circle me-2"></i>Terhubung ke ${document.getElementById('providerName').textContent} (${(data.models || []).length} model):
+                <ul class="mb-0 mt-2">${list}</ul>
+            </div>${warn}${perKeyHtml}`;
         } else {
             box.innerHTML = `<div class="alert alert-danger mb-0"><i class="bi bi-x-circle me-2"></i>Tidak terhubung: ${data.error || 'unknown'}</div>`;
         }
@@ -338,7 +382,52 @@ document.getElementById('btnTest')?.addEventListener('click', async function () 
         box.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-x-circle me-2"></i>Gagal menghubungi aplikasi.</div>';
     }
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Tes Koneksi';
+    btn.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Tes Semua Koneksi';
+});
+
+// Tes koneksi PER KEY
+document.addEventListener('click', function(e) {
+    if (e.target.classList.contains('btn-test-single-key')) {
+        const row = e.target.closest('.input-group');
+        const input = row.querySelector('input[name="openai_keys[]"]');
+        const key = input.value.trim();
+        const prefix = key.substring(0, 8);
+        const statusEl = row.querySelector('.test-status');
+        
+        if (key === '') {
+            alert('Masukkan API key terlebih dahulu.');
+            return;
+        }
+        
+        statusEl.style.display = 'flex';
+        e.target.disabled = true;
+        
+        const fd = new FormData();
+        fd.append('ai_provider', 'openai');
+        fd.append('openai_base', document.getElementById('openaiBase').value);
+        fd.append('openai_keys[]', key);
+        
+        fetch('<?= site_url('admin/settings/test') ?>', { method: 'POST', body: fd })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    statusEl.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Berhasil</span>`;
+                } else {
+                    statusEl.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>Gagal: ${data.error}</span>`;
+                }
+                setTimeout(() => {
+                    statusEl.style.display = 'none';
+                    e.target.disabled = false;
+                }, 3000);
+            })
+            .catch(() => {
+                statusEl.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>Error jaringan</span>`;
+                setTimeout(() => {
+                    statusEl.style.display = 'none';
+                    e.target.disabled = false;
+                }, 3000);
+            });
+    }
 });
 
 // ---- Multi API Key untuk provider AI ----
@@ -349,6 +438,11 @@ document.getElementById('btnAddKey')?.addEventListener('click', function () {
     row.innerHTML = `
         <span class="input-group-text"><i class="bi bi-key"></i></span>
         <input type="password" name="openai_keys[]" class="form-control" placeholder="sk-..." autocomplete="new-password">
+        <span class="input-group-text test-status" style="display:none">
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            <span>Menguji...</span>
+        </span>
+        <button type="button" class="btn btn-outline-secondary btn-test-single-key"><i class="bi bi-lightning"></i></button>
         <button type="button" class="btn btn-outline-danger btn-remove-key"><i class="bi bi-trash"></i></button>
     `;
     list.appendChild(row);

@@ -948,8 +948,10 @@ Provider AI bertipe *OpenAI-compatible* (OpenAI, OpenRouter, Groq, DeepSeek, dll
 
 Di halaman **Pengaturan AI → API Key**:
 
+- **Provider name** ditampilkan di judul bagian (misal: `api.openai.com`, `openrouter.ai`) — diambil dari Base URL.
 - Tombol *Tambah API Key* menambah input key baru.
 - Tombol *hapus* (tong sampah) menghapus baris key.
+- **Tombol petir** di setiap baris key menguji koneksi per key secara individual.
 - Semua key tersimpan terenkripsi di tabel `settings`.
 
 ### Penggunaan
@@ -957,13 +959,19 @@ Di halaman **Pengaturan AI → API Key**:
 1. Pilih provider **API Key**.
 2. Isi Base URL dan model.
 3. Tambahkan satu atau beberapa API key.
-4. Simpan.
+4. Klik tombol **petir** di samping key untuk menguji koneksi individual.
+5. Klik **Simpan** untuk menyimpan semua perubahan.
 
-### Perintah Test
+### Tes Koneksi
 
-```bash
-php spark app:test-ai-provider   # (jika tersedia) atau lewat UI "Tes Koneksi"
-```
+Terdapat dua jenis tes koneksi:
 
-Catatan: *Tes Koneksi* hanya memeriksa key pertama yang tersimpan/diisi.
+1. **Tes Semua Key** (tombol utama): Menguji SEMUA key yang ada di daftar dan menampilkan hasil per key:
+   - ✓ Berhasil: key valid dan dapat terhubung
+   - ✗ Gagal: key invalid, expired, atau tidak dapat terhubung
+   - Daftar model diambil dari key pertama yang berhasil.
+
+2. **Tes Per Key** (tombol petir individual): Menguji satu key spesifik tanpa menyimpan perubahan.
+
+**Catatan**: *Tes Semua Key* akan menguji setiap key yang tersedia (dari form atau dari settings yang tersimpan) dan mengembalikan hasil detail untuk masing-masing key.
 
