@@ -183,42 +183,74 @@ function fillSuggest(text) {
     ta.focus();
 }
 
+function addModelOption(parent, value, label, base, selected) {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    if (base) o.dataset.base = base;
+    if (selected) o.selected = true;
+    parent.appendChild(o);
+    return o;
+}
 async function loadModels() {
     const sel = document.getElementById('modelSelect');
     const saved = localStorage.getItem('ai-model') || '';
+    const savedBase = localStorage.getItem('ai-model-base') || '';
     try {
         const res = await fetch(BASE_URL + 'chat/models');
         const data = await res.json();
-        const list = data.models || [];
         const def = saved || data.default || '';
         sel.innerHTML = '';
+        // Format grup (OpenAI multi-bucket): tiap endpoint jadi optgroup
+        if (Array.isArray(data.groups) && data.groups.length) {
+            let anySelected = false;
+            data.groups.forEach(g => {
+                const host = g.host || g.base;
+                if (!g.models || !g.models.length) {
+                    const o = document.createElement('option');
+                    o.value = ''; o.textContent = `— ${host}: tak terjangkau —`; o.disabled = true;
+                    sel.appendChild(o);
+                    return;
+                }
+                const og = document.createElement('optgroup');
+                og.label = host;
+                g.models.forEach(m => {
+                    const sel2 = def && m === def && (!savedBase || savedBase === g.base);
+                    if (sel2) anySelected = true;
+                    addModelOption(og, m, m, g.base, sel2);
+                });
+                sel.appendChild(og);
+            });
+            if (def && !anySelected) {
+                addModelOption(sel, def, def + ' (default)', savedBase, true);
+            }
+            return;
+        }
+        // Format datar (Ollama / OpenCode / kompatibilitas lama)
+        const list = data.models || [];
         if (!list.length) {
-            const o = document.createElement('option');
-            o.value = def; o.textContent = def || 'Model default';
-            sel.appendChild(o);
+            addModelOption(sel, def, def || 'Model default', '', true);
             return;
         }
         list.forEach(m => {
-            const o = document.createElement('option');
-            o.value = m; o.textContent = m;
-            if (m === def) o.selected = true;
-            sel.appendChild(o);
+            addModelOption(sel, m, m, '', def && m === def);
         });
         if (def && !list.includes(def)) {
-            const o = document.createElement('option');
-            o.value = def; o.textContent = def + ' (default)';
-            o.selected = true;
-            sel.appendChild(o);
+            addModelOption(sel, def, def + ' (default)', '', true);
         }
     } catch (e) {
         sel.innerHTML = '';
-        const o = document.createElement('option');
-        o.value = saved; o.textContent = saved || 'Model default';
-        sel.appendChild(o);
+        addModelOption(sel, saved, saved || 'Model default', savedBase, true);
     }
+}
+function selectedBase() {
+    const sel = document.getElementById('modelSelect');
+    const o = sel.options[sel.selectedIndex];
+    return (o && o.dataset.base) || '';
 }
 document.getElementById('modelSelect').addEventListener('change', function () {
     localStorage.setItem('ai-model', this.value);
+    localStorage.setItem('ai-model-base', selectedBase());
 });
 loadModels();
 
@@ -301,6 +333,7 @@ function sendMessage(e) {
     formData.append('session_id', document.getElementById('sessionId').value);
     formData.append('message', message);
     formData.append('model', document.getElementById('modelSelect').value);
+    formData.append('model_base', selectedBase());
     const fileInput = document.getElementById('fileInput');
     if (fileInput.files[0]) formData.append('attachment', fileInput.files[0]);
     clearAttachment();

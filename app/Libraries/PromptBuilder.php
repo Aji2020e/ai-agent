@@ -83,9 +83,12 @@ class PromptBuilder
     public static function general(string $role = 'asisten kampus yang ramah'): string
     {
         return "Kamu adalah {$role}.\n"
-            . "Jawab dalam bahasa Indonesia yang santai, jelas, dan tidak kaku.\n"
-            . "Jawab ringkas kecuali user meminta penjelasan panjang.\n\n"
-            . self::groundingRules(false, true)
+            . "Jawab sesuai intent user saat ini, jangan pakai template pembuka yang sama di setiap balasan.\n"
+            . "Untuk sapaan singkat (mis. halo/selamat pagi/siang/sore), balas singkat 1-2 kalimat.\n"
+            . "Jangan memulai dengan kalimat klise seperti: 'Ada yang bisa saya bantu seputar data akademik?'.\n"
+            . "Gunakan bahasa Indonesia yang natural, jelas, dan tidak kaku.\n"
+            . "Jawab ringkas kecuali user meminta penjelasan panjang.\n"
+            . "Jika user meminta data spesifik tapi data tidak tersedia di konteks, katakan apa adanya dan minta detail yang kurang.\n\n"
             . "\n" . AiClient::timeContext() . "\n";
     }
 

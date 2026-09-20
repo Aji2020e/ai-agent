@@ -67,9 +67,10 @@ class Discover extends BaseApi
         }
 
         // Obrolan umum: jawab cepat tanpa membuka data akademik.
-        // Sapaan selalu cepat; fallback panjang-pendek hanya bila tanpa ID
-        // (ber-ID seperti "sebutkan nama saya" tetap butuh data profil).
-        if ($forced === '' && $this->isGeneralChat($question, $id !== null && $id !== '')) {
+        // PERBAIKAN: tetap berlaku meski modul dipaksa dari sisi klien/widget.
+        // Tanpa ini, sapaan ringan seperti "selamat sore" masuk pipeline analis
+        // data dan cenderung menghasilkan jawaban template berulang.
+        if ($this->isGeneralChat($question, $id !== null && $id !== '')) {
             return $this->quickChat($client, $question);
         }
 
@@ -261,6 +262,18 @@ class Discover extends BaseApi
     /** Jalur jawaban cepat untuk obrolan umum. */
     private function quickChat(?array $client, string $question)
     {
+        $small = $this->smallTalkReply($question);
+        if ($small !== null) {
+            $this->log($client ? (int) $client['id'] : null, '-', 'ask/obrolan', 0);
+
+            return $this->response->setJSON([
+                'success'  => true,
+                'mode'     => 'obrolan',
+                'analysis' => $small,
+                'tokens'   => 0,
+            ]);
+        }
+
         try {
             [$provider, $url, $model, $opt] = AiClient::currentConfig();
             $model = AiClient::clientModel($client, $model);
@@ -285,6 +298,42 @@ class Discover extends BaseApi
             'analysis' => $reply['content'],
             'tokens'   => (int) ($reply['tokens'] ?? 0),
         ]);
+    }
+
+    /** Balasan obrolan ringan yang deterministic (anti-template model). */
+    private function smallTalkReply(string $question): ?string
+    {
+        $q = mb_strtolower(trim($question));
+        if ($q === '') {
+            return null;
+        }
+
+        if (str_contains($q, 'terima kasih') || str_contains($q, 'makasih') || str_contains($q, 'thanks')) {
+            return 'Sama-sama. Kalau ada yang ingin ditanyakan, tinggal tulis saja.';
+        }
+        if (str_contains($q, 'selamat pagi') || $q === 'pagi') {
+            return 'Selamat pagi juga. Semoga harimu lancar. Mau bahas apa dulu?';
+        }
+        if (str_contains($q, 'selamat siang') || $q === 'siang') {
+            return 'Selamat siang juga. Siap, saya bantu sesuai pertanyaanmu.';
+        }
+        if (str_contains($q, 'selamat sore') || $q === 'sore') {
+            return 'Selamat sore juga. Lanjut, pertanyaanmu apa?';
+        }
+        if (str_contains($q, 'selamat malam') || $q === 'malam') {
+            return 'Selamat malam juga. Kalau ada yang ingin ditanyakan, langsung saja.';
+        }
+        if (str_contains($q, 'apa kabar')) {
+            return 'Baik, terima kasih. Semoga kamu juga baik. Ada yang ingin kamu bahas?';
+        }
+        if ($q === 'halo' || $q === 'hai' || $q === 'hallo') {
+            return 'Halo. Saya siap bantu sesuai pertanyaanmu.';
+        }
+        if ($q === 'ok' || $q === 'oke' || $q === 'sip') {
+            return 'Siap. Lanjut saja, saya ikuti pertanyaanmu.';
+        }
+
+        return null;
     }
 
     private function runDynamic(string $slug, array $row, array $params, string $akses = 'terbatas', bool $asArray = false)

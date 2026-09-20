@@ -200,20 +200,22 @@ class SettingModel extends Model
         try {
             $decoded = json_decode($raw, true);
             if (is_array($decoded)) {
-                // Normalisasi: pastikan nilai adalah array string
+                // Normalisasi: URL dibersihkan agar bucket tidak dobel
+                // karena beda trailing slash, lalu key dideduplikasi.
                 $result = [];
                 foreach ($decoded as $url => $keys) {
-                    if (empty($url) || ! is_array($keys)) {
+                    $url = rtrim(trim((string) $url), '/');
+                    if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false || ! is_array($keys)) {
                         continue;
                     }
-                    $normalKeys = array_values(
-                        array_filter(
-                            array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', $keys),
-                            static fn ($v) => $v !== ''
-                        )
-                    );
+                    $normalKeys = array_values(array_unique(array_filter(
+                        array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', $keys),
+                        static fn ($v) => $v !== ''
+                    )));
                     if (! empty($normalKeys)) {
-                        $result[$url] = $normalKeys;
+                        $result[$url] = isset($result[$url])
+                            ? array_values(array_unique(array_merge($result[$url], $normalKeys)))
+                            : $normalKeys;
                     }
                 }
                 return $result;
@@ -229,17 +231,18 @@ class SettingModel extends Model
     {
         $normalized = [];
         foreach ($data as $url => $keys) {
-            if (empty($url)) {
+            $url = rtrim(trim((string) $url), '/');
+            if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
                 continue;
             }
-            $normalKeys = array_values(
-                array_filter(
-                    array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', (array) $keys),
-                    static fn ($v) => $v !== ''
-                )
-            );
+            $normalKeys = array_values(array_unique(array_filter(
+                array_map(static fn ($v) => is_string($v) ? trim((string) $v) : '', (array) $keys),
+                static fn ($v) => $v !== ''
+            )));
             if (! empty($normalKeys)) {
-                $normalized[$url] = $normalKeys;
+                $normalized[$url] = isset($normalized[$url])
+                    ? array_values(array_unique(array_merge($normalized[$url], $normalKeys)))
+                    : $normalKeys;
             }
         }
 

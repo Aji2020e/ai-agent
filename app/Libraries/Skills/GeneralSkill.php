@@ -19,7 +19,9 @@ class GeneralSkill extends BaseSkill
         return new SkillResult(
             true,
             'General chat mode.',
-            ['guide' => $this->loadGuide('system_prompt')],
+            // Jangan tarik guide template statis untuk mode general.
+            // Tujuan mode ini: respons fleksibel mengikuti input user.
+            [],
         );
     }
 }

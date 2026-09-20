@@ -55,6 +55,7 @@ $routes->group('admin', ['filter' => 'admin'], static function ($routes) {
     $routes->get('settings', 'Settings::index');
     $routes->post('settings/update', 'Settings::update');
     $routes->post('settings/test', 'Settings::test');
+    $routes->post('settings/test-all', 'Settings::testAll');
     $routes->post('settings/remove-key', 'Settings::removeKey');
     $routes->post('settings/key-providers', 'Settings::keyProviders');
     $routes->get('api', 'AdminApi::index');

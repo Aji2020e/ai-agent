@@ -166,6 +166,10 @@ abstract class AssistantModule
         return 'GAYA BAHASA: Indonesia akademik yang hangat dan manusiawi, tidak kaku. '
             . 'Sapa sesuai peran (mahasiswa/dosen/staf). Langsung ke inti, konkret dengan angka/kode yang ada. '
             . 'Hindari bahasa birokrasi dan template robot ("Sebagai AI...", "Berikut adalah..."). '
+            . 'Jangan mengulang salam pembuka yang sama di setiap jawaban. '
+            . 'Jangan menambah kalimat template seperti "Ada yang bisa saya bantu..." kecuali user memang meminta arahan umum. '
+            . 'Bila user memberi sapaan singkat, balas sapaan singkat juga (1-2 kalimat), jangan ubah jadi paragraf panjang. '
+            . 'Sebut ID/NIM/NIK user hanya bila relevan dengan pertanyaan saat ini. '
             . 'JANGAN pernah mengaku sebagai dosen/rektor/pejabat — kamu asisten AI. '
             . 'Boleh memberi semangat singkat bila relevan. Maksimal 250 kata kecuali diminta rinci.';
     }
@@ -178,6 +182,19 @@ abstract class AssistantModule
      */
     protected static function answer(string $systemRole, string $dataText, string $question, int $timeout = 300, ?callable $step = null): array
     {
+        // Jika ini obrolan ringan (sapaan/terima kasih), jangan lewatkan
+        // pipeline analis-kritikus agar tidak keluar format jawaban template.
+        if (static::isSmallTalk($question)) {
+            $emitOnly = [];
+            $emitOnly[] = ['tahap' => 'obrolan', 'pesan' => 'Obrolan umum terdeteksi, menjawab secara generik.', 'jam' => date('H:i:s')];
+            if ($step) {
+                $step('obrolan', 'Obrolan umum terdeteksi, menjawab secara generik.');
+            }
+
+            // Balasan deterministik agar tidak kembali ke template model.
+            return [static::smallTalkReply($question), 0, 'rule-based', $emitOnly, 'sedang'];
+        }
+
         $tokens = 0;
         $model  = '';
         $jejak  = [];
@@ -303,6 +320,75 @@ abstract class AssistantModule
         $emit('selesai', 'Jawaban akhir siap.');
 
         return [$text, $tokens, $model, $jejak, $keyakinan];
+    }
+
+    /** Heuristik obrolan ringan agar tidak masuk pipeline analisis data. */
+    protected static function isSmallTalk(string $question): bool
+    {
+        $q = mb_strtolower(trim($question));
+        if ($q === '') {
+            return false;
+        }
+
+        // Jika ada kata data spesifik, jangan dianggap small-talk.
+        $dataKeywords = [
+            'ipk', 'ips', 'krs', 'khs', 'nilai', 'jadwal', 'semester', 'npm', 'nim', 'nik', 'nidn',
+            'dosen', 'mahasiswa', 'staff', 'jabatan', 'email', 'transkrip', 'sks', 'ukt', 'tagihan',
+        ];
+        foreach ($dataKeywords as $kw) {
+            if (str_contains($q, $kw)) {
+                return false;
+            }
+        }
+
+        $smallTalk = [
+            'halo', 'hai', 'pagi', 'siang', 'sore', 'malam', 'apa kabar',
+            'terima kasih', 'makasih', 'thanks', 'ok', 'oke', 'sip', 'hallo',
+        ];
+
+        foreach ($smallTalk as $kw) {
+            if (str_contains($q, $kw)) {
+                return true;
+            }
+        }
+
+        return mb_strlen($q) <= 24;
+    }
+
+    /** Balasan obrolan ringan yang singkat dan natural. */
+    protected static function smallTalkReply(string $question): string
+    {
+        $q = mb_strtolower(trim($question));
+
+        if (str_contains($q, 'terima kasih') || str_contains($q, 'makasih') || str_contains($q, 'thanks')) {
+            return 'Sama-sama. Kalau ada yang ingin ditanyakan, tinggal tulis saja.';
+        }
+
+        if (str_contains($q, 'selamat pagi') || str_contains($q, 'pagi')) {
+            return 'Selamat pagi juga. Semoga harimu lancar. Mau bahas apa dulu?';
+        }
+
+        if (str_contains($q, 'selamat siang') || str_contains($q, 'siang')) {
+            return 'Selamat siang juga. Siap, saya bantu sesuai pertanyaanmu.';
+        }
+
+        if (str_contains($q, 'selamat sore') || str_contains($q, 'sore')) {
+            return 'Selamat sore juga. Lanjut, pertanyaanmu apa?';
+        }
+
+        if (str_contains($q, 'selamat malam') || str_contains($q, 'malam')) {
+            return 'Selamat malam juga. Kalau ada yang ingin ditanyakan, langsung saja.';
+        }
+
+        if (str_contains($q, 'apa kabar')) {
+            return 'Baik, terima kasih. Semoga kamu juga baik. Ada yang ingin kamu bahas?';
+        }
+
+        if (str_contains($q, 'ok') || str_contains($q, 'oke') || str_contains($q, 'sip')) {
+            return 'Siap. Lanjut saja, saya ikuti pertanyaanmu.';
+        }
+
+        return 'Halo. Saya siap bantu sesuai pertanyaanmu.';
     }
 
     /**

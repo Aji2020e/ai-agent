@@ -24,12 +24,20 @@ class Settings extends BaseController
         //     "https://api.groq.com/openai":     ["gsk_key1"]
         //   }
         // View hanya menampilkan kunci untuk Base URL yang sedang aktif saja.
-        $baseGlobal = rtrim(
+        $baseGlobalRaw = rtrim(
             trim((string) $settings->getGlobal('openai_base', 'https://api.openai.com')) ?: 'https://api.openai.com',
             '/'
         );
+        $baseGlobal = self::normalizeOpenAiBase($baseGlobalRaw) ?: $baseGlobalRaw;
+        if ($baseGlobal !== $baseGlobalRaw) {
+            $settings->setGlobal('openai_base', $baseGlobal);
+        }
 
-        $keyMap         = $settings->getSecretMap('openai_key_map');
+        $keyMapRaw      = $settings->getSecretMap('openai_key_map');
+        $keyMap         = self::normalizeOpenAiKeyMap($keyMapRaw);
+        if ($keyMap !== $keyMapRaw) {
+            $settings->setSecretMap('openai_key_map', $keyMap);
+        }
         $currentKeys    = $keyMap[$baseGlobal] ?? [];
 
         // Migrasi otomatis dari struktur lama (flat list / single key) → struktur per-base-url
@@ -49,6 +57,21 @@ class Settings extends BaseController
             }
         }
 
+        $allKeyRows = [];
+        foreach ($keyMap as $url => $keys) {
+            $u = rtrim((string) $url, '/');
+            if ($u === '' || ! is_array($keys)) {
+                continue;
+            }
+            foreach ($keys as $k) {
+                $kk = trim((string) $k);
+                if ($kk === '') {
+                    continue;
+                }
+                $allKeyRows[] = ['key' => $kk, 'base' => $u];
+            }
+        }
+
         return view('settings/index', [
             'title'              => 'Pengaturan AI',
             'ai_provider'        => $settings->getGlobal('ai_provider', 'ollama') ?: 'ollama',
@@ -56,13 +79,14 @@ class Settings extends BaseController
             'ollama_model'       => $settings->getGlobal('ollama_model', env('app.ollamaModel', 'qwen2.5-coder:32b')),
             'openai_base'        => $baseGlobal,
             'openai_model'       => $settings->getGlobal('openai_model', 'gpt-4o-mini'),
-            'openai_keys'        => $currentKeys,
-            'has_openai_key'     => $currentKeys !== [],
+            'openai_keys'        => $allKeyRows,
+            'has_openai_key'     => $allKeyRows !== [],
             'openai_key_map_all' => $keyMap,      // Semua provider yang pernah diset (untuk info UI)
             'opencode_url'       => $settings->getGlobal('opencode_url', 'http://127.0.0.1:4096'),
             'opencode_user'      => $settings->getGlobal('opencode_user', ''),
             'opencode_model'     => $settings->getGlobal('opencode_model', ''),
             'has_oc_pass'        => $settings->getSecret('opencode_pass', '') !== '',
+            'has_oc_key'         => $settings->getSecret('opencode_key', '') !== '',
             'search_provider'    => $settings->getGlobal('search_provider', 'off') ?: 'off',
             'search_max'         => $settings->getGlobal('search_max', '5'),
             'has_search_key'     => $settings->getSecret('search_key', '') !== '',
@@ -95,8 +119,9 @@ class Settings extends BaseController
 
         $baseUrl = rtrim(trim((string) $this->request->getPost('base_url'))
             ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
+        $baseUrl = self::normalizeOpenAiBase($baseUrl) ?: $baseUrl;
 
-        $keyMap = $settings->getSecretMap('openai_key_map');
+        $keyMap = self::normalizeOpenAiKeyMap($settings->getSecretMap('openai_key_map'));
         $bucket = $keyMap[$baseUrl] ?? [];
 
         $providers = [];
@@ -151,24 +176,42 @@ class Settings extends BaseController
             }
 
             // Base URL & model disimpan sesuai biasa
-            $base      = rtrim(trim((string) $this->request->getPost('openai_base')), '/');
+            $baseRaw   = rtrim(trim((string) $this->request->getPost('openai_base')), '/');
+            $base      = self::normalizeOpenAiBase($baseRaw) ?: $baseRaw;
             $settings->setGlobal('openai_base', $base);
             $settings->setGlobal('openai_model', trim((string) $this->request->getPost('openai_model')));
 
             // Kunci disimpan PER BASE_URL — tiap provider punya bucket kunci sendiri
-            $keyMap    = $settings->getSecretMap('openai_key_map');
             $keys      = $this->request->getPost('openai_keys');
+            $keyBases  = $this->request->getPost('openai_key_bases');
+            $keyMap    = [];
             if (is_array($keys)) {
-                $filtered = [];
-                foreach ($keys as $k) {
+                $grouped = [];
+                foreach ($keys as $i => $k) {
                     $k = trim((string) $k);
-                    if ($k !== '') {
-                        $filtered[] = $k;
+                    if ($k === '') {
+                        continue;
+                    }
+
+                    $rowBaseRaw = is_array($keyBases) ? trim((string) ($keyBases[$i] ?? '')) : '';
+                    $rowBase = self::normalizeOpenAiBase($rowBaseRaw) ?: rtrim($rowBaseRaw, '/');
+                    if ($rowBase === '' || filter_var($rowBase, FILTER_VALIDATE_URL) === false) {
+                        $rowBase = $base;
+                    }
+
+                    $grouped[$rowBase]   = $grouped[$rowBase] ?? [];
+                    $grouped[$rowBase][] = $k;
+                }
+
+                // Simpan hasil pairing key->endpoint per baris.
+                foreach ($grouped as $bucketBase => $bucketKeys) {
+                    $norm = array_values(array_unique(array_filter(array_map(static fn ($v) => trim((string) $v), $bucketKeys), static fn ($v) => $v !== '')));
+                    if ($norm !== []) {
+                        $keyMap[$bucketBase] = $norm;
                     }
                 }
-                $keyMap[$base] = $filtered;
             }
-            $settings->setSecretMap('openai_key_map', $keyMap);
+            $settings->setSecretMap('openai_key_map', self::normalizeOpenAiKeyMap($keyMap));
         } else {
             if (! $this->validate([
                 'opencode_url'   => 'required|valid_url|max_length[255]',
@@ -182,6 +225,10 @@ class Settings extends BaseController
             $pass = (string) $this->request->getPost('opencode_pass');
             if ($pass !== '') {
                 $settings->setSecret('opencode_pass', $pass);
+            }
+            $ockey = trim((string) $this->request->getPost('opencode_key'));
+            if ($ockey !== '') {
+                $settings->setSecret('opencode_key', $ockey);
             }
         }
 
@@ -199,19 +246,21 @@ class Settings extends BaseController
         $settings = new SettingModel();
         $provider = trim((string) $this->request->getPost('provider'));
         $prefix   = trim((string) $this->request->getPost('key_prefix')); // 8 char prefix
+        $fullKey  = trim((string) $this->request->getPost('api_key'));
 
         // Jika tidak ada base_url di request, pakai yang tersimpan
         $postedBase = trim((string) $this->request->getPost('base_url'));
         if ($postedBase === '') {
-            $baseUrl = rtrim(
+            $baseUrlRaw = rtrim(
                 trim((string) $settings->getGlobal('openai_base', 'https://api.openai.com')) ?: 'https://api.openai.com',
                 '/'
             );
         } else {
-            $baseUrl = rtrim($postedBase, '/');
+            $baseUrlRaw = rtrim($postedBase, '/');
         }
+        $baseUrl = self::normalizeOpenAiBase($baseUrlRaw) ?: $baseUrlRaw;
 
-        if ($provider !== 'openai' || $prefix === '') {
+        if ($provider !== 'openai' || ($prefix === '' && $fullKey === '')) {
             return $this->response->setJSON([
                 'success' => false,
                 'message' => 'Param tidak valid.',
@@ -220,7 +269,7 @@ class Settings extends BaseController
         }
 
         // Ambil semua key map
-        $keyMap = $settings->getSecretMap('openai_key_map');
+        $keyMap = self::normalizeOpenAiKeyMap($settings->getSecretMap('openai_key_map'));
         $bucket = $keyMap[$baseUrl] ?? [];
 
         if (empty($bucket)) {
@@ -231,14 +280,15 @@ class Settings extends BaseController
             ]);
         }
 
-        $found = false;
-        foreach ($bucket as $i => $k) {
-            if (str_starts_with($k, $prefix)) {
-                unset($bucket[$i]);
-                $found = true;
-                break;
-            }
+        $before = count($bucket);
+
+        if ($fullKey !== '') {
+            $bucket = array_values(array_filter($bucket, static fn ($k) => trim((string) $k) !== $fullKey));
+        } else {
+            $bucket = array_values(array_filter($bucket, static fn ($k) => ! str_starts_with((string) $k, $prefix)));
         }
+
+        $found = count($bucket) < $before;
 
         if (! $found) {
             // Tampilkan semua prefix yang ada agar admin tahu mana yang sebenarnya ada
@@ -258,15 +308,86 @@ class Settings extends BaseController
         }
 
         // Normalisasi & simpan kembali
-        $keyMap[$baseUrl] = array_values(array_filter($bucket));
-        $settings->setSecretMap('openai_key_map', $keyMap);
+        if ($bucket === []) {
+            unset($keyMap[$baseUrl]);
+        } else {
+            $keyMap[$baseUrl] = array_values(array_unique(array_filter($bucket, static fn ($v) => trim((string) $v) !== '')));
+        }
+        $settings->setSecretMap('openai_key_map', self::normalizeOpenAiKeyMap($keyMap));
+
+        $remaining = isset($keyMap[$baseUrl]) ? count($keyMap[$baseUrl]) : 0;
 
         return $this->response->setJSON([
             'success'      => true,
             'message'      => 'API key berhasil dihapus.',
-            'remaining'    => count($keyMap[$baseUrl]),
+            'remaining'    => $remaining,
             'csrf'         => csrf_hash(),
         ]);
+    }
+
+    /**
+     * Normalisasi base URL OpenAI-compatible untuk penyimpanan key map.
+     * Contoh: https://api.groq.com/openai/v1 -> https://api.groq.com/openai
+     */
+    private static function normalizeOpenAiBase(string $url): string
+    {
+        $url = rtrim(trim($url), '/');
+        if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return '';
+        }
+
+        $parts = parse_url($url);
+        if (! is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return $url;
+        }
+
+        $scheme = strtolower((string) $parts['scheme']);
+        $host   = strtolower((string) $parts['host']);
+        $port   = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $path   = isset($parts['path']) ? rtrim((string) $parts['path'], '/') : '';
+
+        // Satukan bucket /v1, /v2, dst dengan endpoint dasarnya.
+        if ($path !== '' && preg_match('#^(.*)/v\d+$#', $path, $m)) {
+            $path = rtrim((string) $m[1], '/');
+        }
+
+        return $scheme . '://' . $host . $port . ($path !== '' ? $path : '');
+    }
+
+    /**
+     * Normalisasi seluruh map key berdasarkan canonical base URL.
+     * Menggabungkan bucket setara lalu menghapus key duplikat.
+     *
+     * @param array<string, array<int, string>> $map
+     * @return array<string, array<int, string>>
+     */
+    private static function normalizeOpenAiKeyMap(array $map): array
+    {
+        $out = [];
+        foreach ($map as $url => $keys) {
+            $base = self::normalizeOpenAiBase((string) $url);
+            if ($base === '') {
+                continue;
+            }
+
+            $bucket = [];
+            foreach ((array) $keys as $k) {
+                $kk = trim((string) $k);
+                if ($kk !== '') {
+                    $bucket[] = $kk;
+                }
+            }
+
+            if ($bucket === []) {
+                continue;
+            }
+
+            $out[$base] = isset($out[$base])
+                ? array_values(array_unique(array_merge($out[$base], $bucket)))
+                : array_values(array_unique($bucket));
+        }
+
+        return $out;
     }
 
     /** Deteksi jenis provider berdasarkan prefix key API. */
@@ -342,70 +463,82 @@ class Settings extends BaseController
             
             if ($provider === 'openai') {
                 // Ambil Base URL yang diuji (dari form atau settings)
-                $base   = rtrim(trim((string) $this->request->getPost('openai_base'))
+                $baseRaw = rtrim(trim((string) $this->request->getPost('openai_base'))
                     ?: $settings->getGlobal('openai_base', 'https://api.openai.com'), '/');
+                $base = self::normalizeOpenAiBase($baseRaw) ?: $baseRaw;
 
-                // Kunci dari form request (prioritas) atau dari map settings
-                $testKeys = $this->request->getPost('openai_keys');
-                $keysToTest = [];
+                // Kunci dari form request (prioritas, BERPASANGAN dengan endpoint
+                // tiap baris) atau dari map settings yang memang sudah per base URL.
+                // Tiap key dites ke endpointnya SENDIRI, bukan ke Base URL atas.
+                $pairs = []; // [base => [keys...]]
 
+                $testKeys  = $this->request->getPost('openai_keys');
+                $testBases = $this->request->getPost('openai_key_bases');
                 if (is_array($testKeys) && !empty($testKeys)) {
-                    foreach ($testKeys as $k) {
+                    foreach ($testKeys as $i => $k) {
                         $k = trim((string) $k);
-                        if ($k !== '') {
-                            $keysToTest[] = $k;
+                        if ($k === '') {
+                            continue;
                         }
+                        $rowBase = self::normalizeOpenAiBase(trim((string) (is_array($testBases) ? ($testBases[$i] ?? '') : ''))) ?: $base;
+                        $pairs[$rowBase][] = $k;
                     }
                 }
 
                 // Jika form tidak mengirim key, ambil dari map per base URL
-                if (empty($keysToTest)) {
-                    $keyMap = $settings->getSecretMap('openai_key_map');
-                    if (! empty($keyMap[$base])) {
-                        $keysToTest = $keyMap[$base];
-                    } else {
-                        // Fallback ke legacy flat list
+                if (empty($pairs)) {
+                    $keyMap = self::normalizeOpenAiKeyMap($settings->getSecretMap('openai_key_map'));
+                    foreach ($keyMap as $bucketBase => $bucketKeys) {
+                        if (! empty($bucketKeys)) {
+                            $pairs[$bucketBase] = $bucketKeys;
+                        }
+                    }
+                    if (empty($pairs)) {
+                        // Fallback ke legacy flat list (diuji ke base atas)
                         $legacy = $settings->getSecretList('openai_keys');
                         if (! empty($legacy)) {
-                            $keysToTest = $legacy;
+                            $pairs[$base] = $legacy;
                         } else {
                             $oldKey = $settings->getSecret('openai_key', '');
                             if ($oldKey !== '') {
-                                $keysToTest = [$oldKey];
+                                $pairs[$base] = [$oldKey];
                             }
                         }
                     }
                 }
 
-                if (empty($keysToTest)) {
+                if (empty($pairs)) {
                     throw new \RuntimeException('Tidak ada API key untuk Base URL ' . parse_url($base, PHP_URL_HOST) . '. Tambahkan terlebih dahulu.');
                 }
-                
+
                 $models = null;
                 $firstSuccessKey = null;
-                
-                // Uji setiap key secara individual
-                foreach ($keysToTest as $key) {
-                    $keyPrefix = substr($key, 0, 8) . '...';
-                    try {
-                        $result = AiClient::listModels('openai', $base, ['apiKey' => $key]);
-                        $keyResults[$keyPrefix] = [
-                            'success' => true,
-                            'message' => '✓ ' . count($result['models'] ?? []) . ' model tersedia'
-                        ];
-                        
-                        if ($models === null) {
-                            $models = $result['models'] ?? [];
-                            $firstSuccessKey = $key;
+
+                // Uji setiap key ke endpointnya masing-masing
+                foreach ($pairs as $rowBase => $keysToTest) {
+                    foreach ($keysToTest as $key) {
+                        $keyPrefix = substr($key, 0, 8);
+                        $dispPrefix = $keyPrefix . '...';
+                        try {
+                            $result = AiClient::listModels('openai', $rowBase, ['apiKey' => $key]);
+                            $keyResults[$dispPrefix] = [
+                                'success' => true,
+                                'message' => '✓ ' . count($result['models'] ?? []) . ' model tersedia (' . parse_url($rowBase, PHP_URL_HOST) . ')'
+                            ];
+
+                            if ($models === null) {
+                                $models = $result['models'] ?? [];
+                                $firstSuccessKey = $key;
+                            }
+                        } catch (\RuntimeException $e) {
+                            $keyResults[$dispPrefix] = [
+                                'success' => false,
+                                'message' => '✗ ' . $e->getMessage()
+                            ];
                         }
-                    } catch (\RuntimeException $e) {
-                        $keyResults[$keyPrefix] = [
-                            'success' => false,
-                            'message' => '✗ ' . $e->getMessage()
-                        ];
                     }
                 }
-                
+
                 if ($models === null) {
                     throw new \RuntimeException('Semua API key gagal. Coba periksa kembali key dan Base URL.');
                 }
@@ -420,6 +553,8 @@ class Settings extends BaseController
                         ?: $settings->getGlobal('opencode_user', ''),
                     'password' => (string) $this->request->getPost('opencode_pass')
                         ?: $settings->getSecret('opencode_pass', ''),
+                    'apiKey' => trim((string) $this->request->getPost('opencode_key'))
+                        ?: $settings->getSecret('opencode_key', ''),
                 ]);
             } 
             else {
@@ -447,5 +582,84 @@ class Settings extends BaseController
                 'csrf'    => csrf_hash(),
             ]);
         }
+    }
+
+    /**
+     * Tes SEMUA provider sekaligus (Ollama + OpenAI per-base + OpenCode)
+     * memakai kredensial TERSIMPAN. Dipakai via AJAX.
+     */
+    public function testAll()
+    {
+        $settings = new SettingModel();
+        $out = ['success' => true, 'csrf' => csrf_hash(), 'results' => []];
+
+        // Ollama
+        try {
+            $base = rtrim($settings->getGlobal('ollama_url', env('app.ollamaUrl', 'http://localhost:11434')) ?: 'http://localhost:11434', '/');
+            $r = AiClient::listModels('ollama', $base);
+            $out['results']['ollama'] = ['success' => true, 'models' => $r['models'] ?? [], 'base' => $base];
+        } catch (\Throwable $e) {
+            $out['results']['ollama'] = ['success' => false, 'error' => $e->getMessage()];
+        }
+
+        // OpenAI: tiap bucket base URL dites dengan key-nya sendiri
+        try {
+            $keyMap = self::normalizeOpenAiKeyMap($settings->getSecretMap('openai_key_map'));
+            if (empty($keyMap)) {
+                $legacy = $settings->getSecretList('openai_keys');
+                if (! empty($legacy)) {
+                    $keyMap = [rtrim($settings->getGlobal('openai_base', 'https://api.openai.com'), '/') => $legacy];
+                } else {
+                    $oldKey = $settings->getSecret('openai_key', '');
+                    if ($oldKey !== '') {
+                        $keyMap = [rtrim($settings->getGlobal('openai_base', 'https://api.openai.com'), '/') => [$oldKey]];
+                    }
+                }
+            }
+            if (empty($keyMap)) {
+                $out['results']['openai'] = ['success' => false, 'error' => 'Belum ada API key tersimpan.'];
+            } else {
+                $buckets = [];
+                foreach ($keyMap as $bucketBase => $bucketKeys) {
+                    $row = ['base' => $bucketBase, 'keys' => [], 'models' => []];
+                    foreach ((array) $bucketKeys as $key) {
+                        try {
+                            $r = AiClient::listModels('openai', $bucketBase, ['apiKey' => $key]);
+                            $row['keys'][substr($key, 0, 8) . '...'] = [
+                                'success' => true,
+                                'message' => '✓ ' . count($r['models'] ?? []) . ' model tersedia',
+                            ];
+                            if (empty($row['models'])) {
+                                $row['models'] = $r['models'] ?? [];
+                            }
+                        } catch (\Throwable $e) {
+                            $row['keys'][substr($key, 0, 8) . '...'] = [
+                                'success' => false,
+                                'message' => '✗ ' . $e->getMessage(),
+                            ];
+                        }
+                    }
+                    $buckets[] = $row;
+                }
+                $out['results']['openai'] = ['success' => true, 'buckets' => $buckets];
+            }
+        } catch (\Throwable $e) {
+            $out['results']['openai'] = ['success' => false, 'error' => $e->getMessage()];
+        }
+
+        // OpenCode (saved creds; API key prioritas)
+        try {
+            $base = rtrim($settings->getGlobal('opencode_url', 'http://127.0.0.1:4096') ?: 'http://127.0.0.1:4096', '/');
+            $r = AiClient::listModels('opencode', $base, [
+                'username' => $settings->getGlobal('opencode_user', ''),
+                'password' => $settings->getSecret('opencode_pass', ''),
+                'apiKey'   => $settings->getSecret('opencode_key', ''),
+            ]);
+            $out['results']['opencode'] = ['success' => true, 'models' => $r['models'] ?? [], 'base' => $base];
+        } catch (\Throwable $e) {
+            $out['results']['opencode'] = ['success' => false, 'error' => $e->getMessage()];
+        }
+
+        return $this->response->setJSON($out);
     }
 }

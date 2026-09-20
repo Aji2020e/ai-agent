@@ -43,7 +43,7 @@ class DynamicAssistant extends AssistantModule
      */
     protected static function viaV2Functions(array $cfg, string $id, array $params): array
     {
-        $map = ['mhs' => 'profil', 'aktivitas_kuliah_mhs' => 'akm', 'KRS' => 'krs', 'dosen' => 'dosen'];
+        $map = ['mhs' => 'profil', 'aktivitas_kuliah_mhs' => 'akm', 'KRS' => 'krs', 'dosen' => 'dosen', 'KEUANGAN_PEMBAYARAN_MHS' => 'tagihan'];
         $data = [];
 
         $call = static function (?string $table, string $fallbackId) use ($map, $params) {

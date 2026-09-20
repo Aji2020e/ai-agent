@@ -60,6 +60,7 @@ class AiClient
                 [
                     'username' => (string) $s->getGlobal('opencode_user', ''),
                     'password' => (string) $s->getSecret('opencode_pass', ''),
+                    'apiKey'   => (string) $s->getSecret('opencode_key', ''),
                     'timeout'  => 600,
                 ] + self::sampling($s),
             ];
@@ -102,6 +103,82 @@ class AiClient
         }
 
         return max($min, min($max, (float) $v));
+    }
+
+    /**
+     * Normalisasi canonical base URL OpenAI-compatible.
+     * Satukan varian /v1, /v2 dengan endpoint dasarnya.
+     */
+    public static function normalizeOpenAiBase(string $url): string
+    {
+        $url = rtrim(trim($url), '/');
+        if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return '';
+        }
+
+        $parts = parse_url($url);
+        if (! is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return $url;
+        }
+
+        $scheme = strtolower((string) $parts['scheme']);
+        $host   = strtolower((string) $parts['host']);
+        $port   = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $path   = isset($parts['path']) ? rtrim((string) $parts['path'], '/') : '';
+
+        if ($path !== '' && preg_match('#^(.*)/v\d+$#', $path, $m)) {
+            $path = rtrim((string) $m[1], '/');
+        }
+
+        return $scheme . '://' . $host . $port . ($path !== '' ? $path : '');
+    }
+
+    /**
+     * Semua bucket key OpenAI per base URL: [base => [keys...]].
+     * Dipakai agar TIAP endpoint dites/dipakai dengan key-nya sendiri.
+     */
+    public static function openaiBuckets(): array
+    {
+        $s          = new \App\Models\SettingModel();
+        $baseGlobal = rtrim($s->getGlobal('openai_base', 'https://api.openai.com') ?: 'https://api.openai.com', '/');
+
+        $raw = $s->getSecretMap('openai_key_map');
+        $out = [];
+        if (is_array($raw)) {
+            foreach ($raw as $url => $keys) {
+                $base = self::normalizeOpenAiBase((string) $url);
+                if ($base === '') {
+                    continue;
+                }
+                $bucket = [];
+                foreach ((array) $keys as $k) {
+                    $kk = trim((string) $k);
+                    if ($kk !== '') {
+                        $bucket[] = $kk;
+                    }
+                }
+                if ($bucket !== []) {
+                    $out[$base] = isset($out[$base])
+                        ? array_values(array_unique(array_merge($out[$base], $bucket)))
+                        : array_values(array_unique($bucket));
+                }
+            }
+        }
+
+        // Backward compatibility: secret lama bila map kosong
+        if ($out === []) {
+            $legacy = $s->getSecretList('openai_keys');
+            if (! empty($legacy)) {
+                $out[$baseGlobal] = array_values($legacy);
+            } else {
+                $old = $s->getSecret('openai_key', '');
+                if ($old !== '') {
+                    $out[$baseGlobal] = [$old];
+                }
+            }
+        }
+
+        return $out;
     }
 
     private static function clampInt(?string $v, int $min, int $max, int $def): int
@@ -171,7 +248,8 @@ class AiClient
                 (string) ($opt['opencodeSession'] ?? ''),
                 (string) ($opt['username'] ?? ''),
                 (string) ($opt['password'] ?? ''),
-                (int) ($opt['timeout'] ?? 600)
+                (int) ($opt['timeout'] ?? 600),
+                (string) ($opt['apiKey'] ?? '')
             );
         }
 
@@ -215,7 +293,7 @@ class AiClient
 
         if ($provider === 'opencode') {
             return [
-                'models'  => self::opencodeModels($baseUrl, (string) ($opt['username'] ?? ''), (string) ($opt['password'] ?? '')),
+                'models'  => self::opencodeModels($baseUrl, (string) ($opt['username'] ?? ''), (string) ($opt['password'] ?? ''), (string) ($opt['apiKey'] ?? '')),
                 'default' => (string) ($opt['default'] ?? ''),
             ];
         }
@@ -352,8 +430,16 @@ class AiClient
         return [$path, '/api' . $path];
     }
 
-    private static function ocAuth(string $username, string $password): array
+    /**
+     * Prioritas: API key (opencode online / cloud, Bearer) → basic auth
+     * (opencode serve self-hosted) → tanpa auth.
+     */
+    private static function ocAuth(string $username, string $password, string $apiKey = ''): array
     {
+        if ($apiKey !== '') {
+            return ['headers' => ['Authorization' => 'Bearer ' . $apiKey]];
+        }
+
         if ($password === '') {
             return [];
         }
@@ -420,9 +506,9 @@ class AiClient
         throw new RuntimeException("Server OpenCode tak terjangkau di {$baseUrl}. Detail: {$last}");
     }
 
-    private static function opencodeModels(string $baseUrl, string $username, string $password): array
+    private static function opencodeModels(string $baseUrl, string $username, string $password, string $apiKey = ''): array
     {
-        $auth = self::ocAuth($username, $password);
+        $auth = self::ocAuth($username, $password, $apiKey);
 
         [$data] = self::ocGet($baseUrl, ['/config/providers', '/provider', '/api/config/providers', '/api/provider'], $auth);
 
@@ -457,9 +543,10 @@ class AiClient
         string $sessionId,
         string $username,
         string $password,
-        int $timeout
+        int $timeout,
+        string $apiKey = ''
     ): array {
-        $auth = self::ocAuth($username, $password);
+        $auth = self::ocAuth($username, $password, $apiKey);
 
         // 1. Sesi opencode (pakai ulang bila ada mapping)
         $prefix = '';

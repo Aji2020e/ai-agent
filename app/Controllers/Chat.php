@@ -20,6 +20,7 @@ class Chat extends BaseController
     protected array $apiKeys = [];
     protected string $ocUser = '';
     protected string $ocPass = '';
+    protected string $ocKey  = '';
 
     /** Ekstensi file teks/kode yang boleh dilampirkan. */
     protected array $allowedExt = [
@@ -40,6 +41,7 @@ class Chat extends BaseController
         $this->apiKeys = (array) ($opt['apiKeys'] ?? []);
         $this->ocUser  = (string) ($opt['username'] ?? '');
         $this->ocPass  = (string) ($opt['password'] ?? '');
+        $this->ocKey   = (string) ($opt['apiKey'] ?? '');
 
         // Sesi web internal: bukan request API eksternal, tapi tetap diberi
         // kebijakan agar tool berbahaya (file_reader) tidak tersedia bagi AI.
@@ -104,6 +106,21 @@ class Chat extends BaseController
             $model = $this->aiModel;
         }
 
+        // Base URL & key mengikuti model yang dipilih — TAPI hanya dari
+        // bucket tersimpan (anti-SSRF: URL arbitrary dari browser ditolak).
+        $chatBase = $this->aiUrl;
+        $chatKeys = $this->provider === 'opencode' ? [$this->ocKey] : $this->apiKeys;
+        if ($this->provider === 'openai') {
+            $wantBase = AiClient::normalizeOpenAiBase(trim((string) $this->request->getPost('model_base')));
+            $buckets  = AiClient::openaiBuckets();
+            if ($wantBase !== '' && isset($buckets[$wantBase]) && $buckets[$wantBase] !== []) {
+                $chatBase = $wantBase;
+                $chatKeys = $buckets[$wantBase];
+            } elseif ($this->apiKeys === []) {
+                $chatKeys = [$this->apiKey];
+            }
+        }
+
         // Sesi baru harus ada dulu sebelum simpan lampiran
         $isNew = false;
         if (empty($sessionId)) {
@@ -157,12 +174,12 @@ class Chat extends BaseController
         try {
             $assistantReply = AiClient::chat(
                 $this->provider,
-                $this->aiUrl,
+                $chatBase,
                 $model,
                 $context,
                 [
-                    'apiKey'          => $this->apiKey,
-                    'apiKeys'         => $this->apiKeys,
+                    'apiKey'          => $this->provider === 'opencode' ? $this->ocKey : ($chatKeys[0] ?? $this->apiKey),
+                    'apiKeys'         => $chatKeys,
                     'username'        => $this->ocUser,
                     'password'        => $this->ocPass,
                     'opencodeSession' => (string) $this->settings->getGlobal('opencode_session_' . $sessionId, ''),
@@ -284,9 +301,15 @@ class Chat extends BaseController
 
         // ---- 1. Bangun SYSTEM PROMPT saja (PromptBuilder tak lagi menyisipkan
         //         pesan user — itu tugas ContextBuilder) ----
-        $system = $skillResult !== null
-            ? PromptBuilder::build($skillName, $skillResult)
-            : PromptBuilder::general('AI Coding & Academic Assistant');
+        // Mode general harus benar-benar generik mengikuti input user,
+        // bukan ikut pola template skill berbasis data.
+        if ($skillName === 'general') {
+            $system = PromptBuilder::general('AI Coding & Academic Assistant yang adaptif');
+        } else {
+            $system = $skillResult !== null
+                ? PromptBuilder::build($skillName, $skillResult)
+                : PromptBuilder::general('AI Coding & Academic Assistant');
+        }
 
         // ---- 2. PERBAIKAN B4: hasil web masuk ke SYSTEM, bukan sebagai
         //         turn user tambahan yang menggeser pertanyaan asli ----
@@ -309,8 +332,38 @@ class Chat extends BaseController
     public function models()
     {
         try {
+            // OpenAI-compatible: gabungkan SEMUA bucket agar tiap endpoint
+            // (Groq, Zen, dst) muncul dengan key-nya masing-masing.
+            if ($this->provider === 'openai') {
+                $groups = [];
+                foreach (AiClient::openaiBuckets() as $base => $keys) {
+                    try {
+                        $r = AiClient::listModels('openai', $base, ['apiKey' => $keys[0]]);
+                        $groups[] = [
+                            'base'   => $base,
+                            'host'   => (string) parse_url($base, PHP_URL_HOST),
+                            'models' => $r['models'] ?? [],
+                        ];
+                    } catch (\RuntimeException $e) {
+                        $groups[] = [
+                            'base'   => $base,
+                            'host'   => (string) parse_url($base, PHP_URL_HOST),
+                            'models' => [],
+                            'error'  => $e->getMessage(),
+                        ];
+                    }
+                }
+
+                return $this->response->setJSON([
+                    'success'  => true,
+                    'groups'   => $groups,
+                    'default'  => $this->aiModel,
+                    'provider' => $this->provider,
+                ]);
+            }
+
             $result = AiClient::listModels($this->provider, $this->aiUrl, [
-                'apiKey'   => $this->apiKey,
+                'apiKey'   => $this->provider === 'opencode' ? $this->ocKey : $this->apiKey,
                 'username' => $this->ocUser,
                 'password' => $this->ocPass,
                 'default'  => $this->aiModel,
